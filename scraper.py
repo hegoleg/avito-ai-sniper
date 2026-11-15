@@ -371,7 +371,9 @@ class AvitoScraper:
             # 1. Check for closed/archived listing banner strictly within main container
             main_container = await tab.query_selector('[data-marker="item-view"], main') or tab
             closed_el = await main_container.query_selector(
-                '[data-marker="item-view/closed-warning"], [data-marker="closed-item-warning"]'
+                '[data-marker="item-view/closed-warning"], [data-marker="closed-item-warning"], '
+                '[data-marker*="closed"], [class*="closed-warning"], [class*="closedWarning"], [class*="item-closed"], '
+                'div:has-text("снято с публикации"), div:has-text("Объявление закрыто"), div:has-text("Товар продан")'
             )
             if closed_el:
                 closed_text = (await closed_el.inner_text()).lower()

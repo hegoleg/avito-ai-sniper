@@ -133,3 +133,55 @@ def test_explicit_sodimm_query_allows_laptop():
     }
     ok, reason = target.quick_filter(item)
     assert ok, f"Expected allow for explicit SODIMM query, got: {reason}"
+
+
+def test_hyphenated_so_dimm_rejected_for_desktop():
+    """Item with 'so-dimm' in title must be rejected when searching for desktop RAM."""
+    target = SearchTarget(name="Desktop RAM", query="ddr4 16gb 3200")
+    item = {
+        "item_id": "8440046914",
+        "title": "Оперативная память ddr4 16gb 3200 2x8 so-dimm",
+        "price": 5000,
+        "raw_description": "Две плашки для ноутбука",
+        "is_reserved": False
+    }
+    ok, reason = target.quick_filter(item)
+    assert not ok, f"Expected rejection, but passed with: {reason}"
+    assert "ноутбук" in reason.lower() or "so-dimm" in reason.lower() or "sodimm" in reason.lower()
+
+
+def test_damaged_parts_rejected():
+    """Items damaged or sold for parts must be rejected by verify_full_details."""
+    target = SearchTarget(name="Desktop RAM", query="ddr4 16gb 3200")
+    text = "Оперативная память новая, DDR4 Kingbank 16 GB 3200Hz, повреждена при транспортировке, на запчасти."
+    ok, reason = target.verify_full_details(text)
+    assert not ok
+    assert "дефект" in reason.lower() or "запчасти" in reason.lower()
+
+
+def test_non_working_does_not_boot_rejected():
+    """Non-working items where PC does not boot must be rejected."""
+    target = SearchTarget(name="Desktop RAM", query="ddr4 16gb 3200")
+    text = "НЕ РАБОЧАЯ С виду все отличная, комп не запускает Доставкой отправлю"
+    ok, reason = target.verify_full_details(text)
+    assert not ok
+    assert "дефект" in reason.lower() or "запчасти" in reason.lower()
+
+
+def test_closed_archived_listing_rejected():
+    """Closed or archived listing must be rejected."""
+    target = SearchTarget(name="Desktop RAM", query="ddr4 16gb 3200")
+    text = "Оперативная память ddr4 16gb 3200"
+    ok, reason = target.verify_full_details(text, is_closed=True)
+    assert not ok
+    assert "снято с публикации" in reason.lower() or "закрыто" in reason.lower()
+
+
+def test_specs_sodimm_rejected_when_title_has_no_sodimm():
+    """When title doesn't mention sodimm (e.g. SCY), but specs state SODIMM, deep verification must reject."""
+    target = SearchTarget(name="Desktop RAM", query="ddr4 16gb 3200")
+    title_and_desc = "Оперативная память scy ddr4 16gb 3200"
+    specs = "Форм-фактор: SODIMM | Тактовая частота: 3200 МГц | Объем: 16 ГБ"
+    ok, reason = target.verify_full_details(f"{title_and_desc}\n{specs}")
+    assert not ok
+    assert "sodimm" in reason.lower() or "ноутбук" in reason.lower()

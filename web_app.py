@@ -202,8 +202,13 @@ async def run_slot_scan(slot_id: str, query: str, min_price: Optional[int], max_
                 details = await scraper.get_item_full_details(url)
                 combined_text = details.get("combined_text", "")
                 is_page_reserved = details.get("is_page_reserved", False)
+                is_closed = details.get("is_closed", False)
 
-                valid, reject_reason = target.verify_full_details(combined_text, is_page_reserved=is_page_reserved)
+                valid, reject_reason = target.verify_full_details(
+                    combined_text,
+                    is_page_reserved=is_page_reserved,
+                    is_closed=is_closed
+                )
                 if not valid:
                     if item_id:
                         mark_deal_reserved_or_inactive(item_id)
@@ -520,6 +525,22 @@ def get_smart_top_deals(query: str, min_price: Optional[int] = None, max_price: 
 
 @app.get("/api/deals/{query}")
 async def get_deals_for_query(query: str, min_price: Optional[int] = None, max_price: Optional[int] = None):
+    # Auto-resolve min_price from pc_build slots if not explicitly provided
+    if min_price is None:
+        try:
+            with get_connection() as conn:
+                clean_q = query.strip().lower()
+                row = conn.execute(
+                    "SELECT min_price, max_price FROM pc_build WHERE LOWER(target_query) = ? OR LOWER(target_query) LIKE ? OR slot_id = ?",
+                    (clean_q, f"%{clean_q}%", clean_q)
+                ).fetchone()
+                if row and row["min_price"]:
+                    min_price = row["min_price"]
+                if row and row["max_price"] and max_price is None:
+                    max_price = row["max_price"]
+        except Exception:
+            pass
+
     deals = await asyncio.to_thread(
         get_smart_top_deals,
         query=query,

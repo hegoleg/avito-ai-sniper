@@ -246,11 +246,14 @@ class SearchTarget:
 
         return True, "OK"
 
-    def verify_full_details(self, combined_text: str, is_page_reserved: bool = False) -> Tuple[bool, str]:
+    def verify_full_details(self, combined_text: str, is_page_reserved: bool = False, is_closed: bool = False) -> Tuple[bool, str]:
         """
         Deep verification applied on item page full description and parameters.
         Scoped action block reservation check and negation masking applied.
         """
+        if is_closed:
+            return False, "Объявление снято с публикации / закрыто"
+
         if is_page_reserved:
             return False, "Товар зарезервирован (Авито Доставка)"
 
@@ -484,8 +487,13 @@ async def scan_target_once(
         details = await scraper.get_item_full_details(url)
         combined_text = details.get("combined_text", "")
         is_page_reserved = details.get("is_page_reserved", False)
+        is_closed = details.get("is_closed", False)
 
-        valid, reject_reason = target.verify_full_details(combined_text, is_page_reserved=is_page_reserved)
+        valid, reject_reason = target.verify_full_details(
+            combined_text,
+            is_page_reserved=is_page_reserved,
+            is_closed=is_closed
+        )
         if not valid:
             print(f"   ⚠️ [ОТСЕВ] {price:,} ₽ | {title} -> {reject_reason}".replace(",", " "))
             if item_id:
