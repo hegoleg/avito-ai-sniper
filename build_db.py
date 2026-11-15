@@ -50,8 +50,8 @@ DEFAULT_SLOTS = [
         "min_price": 2500,
         "max_price": 8000,
         "retail_est": 5500,
-        "required_words": "ddr4,3200",
-        "exclude_words": "sodimm,ecc,reg,сервер,солянк"
+        "required_words": "ddr4,16gb,3200",
+        "exclude_words": "sodimm,so-dimm,ноутбук,ноутбучн,ecc,reg,сервер,серверн,солянк"
     },
     {
         "slot_id": "cooler",
@@ -107,7 +107,7 @@ BUILD_TEMPLATES = {
             "cpu": {"query": "ryzen 5 5600x", "min": 6000, "max": 13000, "retail": 12500, "req": "5600x", "excl": "5600g,ноутбук"},
             "motherboard": {"query": "gigabyte b550m aorus elite", "min": 6500, "max": 16000, "retail": 13500, "req": "b550m,aorus", "excl": "ds3h"},
             "gpu": {"query": "rtx 3070", "min": 25000, "max": 36000, "retail": 48000, "req": "3070", "excl": "3070m,mobile,кулер"},
-            "ram": {"query": "ddr4 16gb 3200", "min": 2500, "max": 8000, "retail": 5500, "req": "ddr4,3200", "excl": "sodimm,ecc"},
+            "ram": {"query": "ddr4 16gb 3200", "min": 2500, "max": 8000, "retail": 5500, "req": "ddr4,16gb,3200", "excl": "sodimm,so-dimm,ноутбук,ecc,reg,сервер"},
             "cooler": {"query": "id-cooling se-224-xt", "min": 800, "max": 2500, "retail": 2300, "req": "224", "excl": ""},
             "ssd": {"query": "ssd m.2 1tb", "min": 3000, "max": 7500, "retail": 7500, "req": "1tb", "excl": "sata"},
             "psu": {"query": "блок питания 650w", "min": 2500, "max": 6000, "retail": 6500, "req": "650", "excl": "aerocool vx"},
@@ -121,7 +121,7 @@ BUILD_TEMPLATES = {
             "cpu": {"query": "ryzen 7 5700x", "min": 8000, "max": 17000, "retail": 16000, "req": "5700x", "excl": "5700g,ноутбук"},
             "motherboard": {"query": "gigabyte b550m aorus elite", "min": 6500, "max": 16000, "retail": 13500, "req": "b550m,aorus", "excl": "ds3h"},
             "gpu": {"query": "rtx 4060", "min": 25000, "max": 36000, "retail": 41000, "req": "4060", "excl": "4060m,mobile,кулер"},
-            "ram": {"query": "ddr4 32gb 3200", "min": 4500, "max": 12000, "retail": 9500, "req": "ddr4,32gb", "excl": "sodimm,ecc"},
+            "ram": {"query": "ddr4 32gb 3200", "min": 4500, "max": 12000, "retail": 9500, "req": "ddr4,32gb", "excl": "sodimm,so-dimm,ноутбук,ecc,reg,сервер"},
             "cooler": {"query": "id-cooling se-224-xt", "min": 800, "max": 2500, "retail": 2300, "req": "224", "excl": ""},
             "ssd": {"query": "ssd m.2 1tb", "min": 3000, "max": 7500, "retail": 7500, "req": "1tb", "excl": "sata"},
             "psu": {"query": "блок питания 700w", "min": 3000, "max": 7000, "retail": 7500, "req": "700", "excl": "aerocool vx"},
@@ -135,7 +135,7 @@ BUILD_TEMPLATES = {
             "cpu": {"query": "ryzen 5 5600", "min": 5500, "max": 10500, "retail": 10500, "req": "5600", "excl": "5600g,5600x"},
             "motherboard": {"query": "материнская плата b450m", "min": 4000, "max": 8000, "retail": 7500, "req": "b450", "excl": "дефект"},
             "gpu": {"query": "gtx 1660 super", "min": 9000, "max": 14000, "retail": 22000, "req": "1660", "excl": "кулер,артефакт"},
-            "ram": {"query": "ddr4 16gb 3200", "min": 2500, "max": 7000, "retail": 5500, "req": "ddr4", "excl": "sodimm,ecc"},
+            "ram": {"query": "ddr4 16gb 3200", "min": 2500, "max": 7000, "retail": 5500, "req": "ddr4,16gb", "excl": "sodimm,so-dimm,ноутбук,ecc,reg,сервер"},
             "cooler": {"query": "кулер для процессора 4 трубки", "min": 600, "max": 1800, "retail": 1800, "req": "", "excl": ""},
             "ssd": {"query": "ssd m.2 512gb", "min": 1800, "max": 4500, "retail": 4500, "req": "512", "excl": ""},
             "psu": {"query": "блок питания 500w", "min": 1800, "max": 4500, "retail": 4500, "req": "500", "excl": "vx"},
@@ -181,6 +181,19 @@ def init_builder_tables(db_path: str = DB_PATH):
                     s["retail_est"], s["required_words"], s["exclude_words"]
                 ))
             conn.commit()
+
+        # Auto-heal legacy or empty RAM slot configurations
+        conn.execute("""
+            UPDATE pc_build
+            SET required_words = 'ddr4,16gb,3200',
+                exclude_words = 'sodimm,so-dimm,ноутбук,ноутбучн,ecc,reg,сервер,серверн,солянк'
+            WHERE slot_id = 'ram' AND (
+                required_words = '' OR required_words IS NULL OR
+                exclude_words = '' OR exclude_words IS NULL OR
+                exclude_words NOT LIKE '%ноутбук%'
+            )
+        """)
+        conn.commit()
 
 
 def get_current_build(db_path: str = DB_PATH) -> List[Dict[str, Any]]:

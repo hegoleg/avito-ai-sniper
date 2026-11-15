@@ -6,6 +6,7 @@ Tracks seen listings, deal scores, price drops, and notification history.
 import sqlite3
 import json
 import os
+import re
 import logging
 from typing import Optional, Dict, Any, List
 from datetime import datetime, timezone
@@ -257,3 +258,51 @@ def get_all_time_top_deals(query: Optional[str] = None, limit: int = 5, db_path:
                 LIMIT ?
             """, (limit,)).fetchall()
         return [dict(r) for r in rows]
+
+
+def cleanup_invalid_verified_deals(db_path: str = DB_PATH) -> int:
+    """
+    Sanitizes verified_deals table by purging false positives:
+    - RAM: SODIMM / laptop, ECC / server, multi-generation catalog, capacity mismatch.
+    - GPU: mobile chips, cooling/accessories only.
+    Returns the count of purged deals.
+    """
+    purged_count = 0
+    with get_connection(db_path) as conn:
+        rows = conn.execute("SELECT item_id, query, title, price FROM verified_deals WHERE is_active = 1").fetchall()
+        for r in rows:
+            item_id = str(r["item_id"])
+            t = (r["title"] or "").lower()
+            q = (r["query"] or "").lower()
+            should_purge = False
+
+            # Check RAM deals
+            if any(k in q or k in t for k in ["ddr", "озу", "ram"]):
+                # Laptop / SODIMM
+                if any(k in t for k in ["ноутбук", "sodimm", "so-dimm", "для ноутбука", "ноута"]):
+                    should_purge = True
+                # Server / ECC
+                elif any(k in t for k in ["серверн", "сервер", "ecc", "reg", "rdimm", "lrdimm", "xeon", "x99"]):
+                    should_purge = True
+                # Multi-generation
+                elif len(set(re.findall(r"\bddr\s*([2-5])\b", t))) >= 2:
+                    should_purge = True
+                # Capacity mismatch: requested 16GB, title explicitly says 8GB
+                elif any(k in q for k in ["16gb", "16 gb", "16гб"]):
+                    if re.search(r"\b8\s*(?:gb|гб)\b", t) and not re.search(r"\b(?:16|32|64)\s*(?:gb|гб)?\b|2\s*[xх*]\s*8", t):
+                        should_purge = True
+                    # Vague title with no capacity or frequency
+                    elif t.strip() in ["оперативная память ddr4", "новая оперативная память", "оперативная память и m2 nvme ssd"]:
+                        should_purge = True
+
+            # Check GPU deals
+            if any(k in q for k in ["rtx", "gtx", "rx", "видеокарт"]):
+                if any(k in t for k in ["mobile", "мобайл", "кулер", "охлаждение", "коробка", "радиатор"]):
+                    should_purge = True
+
+            if should_purge:
+                conn.execute("UPDATE verified_deals SET is_active = 0 WHERE item_id = ?", (item_id,))
+                purged_count += 1
+
+        conn.commit()
+    return purged_count

@@ -56,6 +56,26 @@ MB_MULTI_REGEX = re.compile(
     re.IGNORECASE
 )
 
+# RAM multiple generations (e.g. "DDR 3 DDR 4", "DDR3 / DDR4", "DDR4, DDR3L, DDR3 и DDR2")
+RAM_GEN_REGEX = re.compile(
+    r"\bddr\s*([2-5]l?)\b",
+    re.IGNORECASE
+)
+
+# RAM mixed form factor in title (e.g. "ПК и ноутбук", "для компьютера и ноутбука", "dimm и sodimm")
+RAM_MULTI_FORM_FACTOR_REGEX = re.compile(
+    r"\b(?:(?:пк|компьютер\w*|системник\w*|dimm)\s*(?:и|/|,|\+)\s*(?:ноутбук\w*|ноута|sodimm|so-dimm)|"
+    r"(?:ноутбук\w*|ноута|sodimm|so-dimm)\s*(?:и|/|,|\+)\s*(?:пк|компьютер\w*|системник\w*|dimm)|"
+    r"для\s+(?:пк|компьютера)\s+и\s+ноутбука)\b",
+    re.IGNORECASE
+)
+
+# RAM multiple capacities in title (e.g. "8gb,16gb,32gb", "8/16/32", "8gb / 16gb")
+RAM_MULTI_CAPACITY_REGEX = re.compile(
+    r"\b(?:4|8|16|32|64)\s*(?:gb|гб)?\s*[/,;\\|]\s*(?:4|8|16|32|64)\s*(?:gb|гб)?\b",
+    re.IGNORECASE
+)
+
 # --- Bait Price Phrases (Title & Description) ---
 BAIT_PRICE_PATTERNS = [
     r"\bцен(?:а|ы)\s+от\b",
@@ -63,8 +83,13 @@ BAIT_PRICE_PATTERNS = [
     r"\bот\s+\d{3,6}\s*(?:руб|р|₽)\b",
     r"\b(?:цена|цены|прайс|прайс-?лист)\s+(?:в\s+описании|в\s+тексте|ниже)\b",
     r"\bактуальные\s+цены\s+ниже\b",
-    r"\b(?:уточняйте|уточнять)\s+цену\b",
-    r"\bцена\s+по\s+запросу\b",
+    r"\b(?:уточняйте|уточнять)\s+(?:наличие\s*,?\s*и\s+)?цен[ыу]\b",
+    r"\b(?:наличие\s*,?\s*(?:и\s+)?|цен[ыу]\s+)?уточняйте\b(?=.*?\bцен[ыу]\b)",
+    r"\bцен[ыу]\s+уточняйте\b",
+    r"\bцен(?:а|ы)\s+по\s+запросу\b",
+    r"\bцены\s+разные\b",
+    r"\bцена\s+договорная\b",
+    r"\bв\s+наличии\s*[:\s]+несколько\b",
     r"\bцена\s+указана\s+за\s+(?:младший|минимальный|самый|один|одну|1)\b",
     r"\bцена\s+за\s+(?:младший|минимальный|самый|одну|1)\b",
     r"\bсписок\s+(?:процессоров|видеокарт|товаров|наличия|комплектующих)\b",
@@ -196,6 +221,22 @@ def check_multi_model_catalog(title: str, query: str = "") -> Tuple[bool, str]:
         if len(normalized_gpus) >= 2:
             return True, f"Сборный список видеокарт в названии: {sorted(list(normalized_gpus))}"
 
+    # 6. Multiple distinct RAM generations (e.g. DDR3 and DDR4, DDR4 and DDR2)
+    ram_gen_matches = RAM_GEN_REGEX.findall(title)
+    if ram_gen_matches:
+        # Standardize '3l' -> '3' for generation counting
+        norm_gens = set(g.lower().replace('l', '') for g in ram_gen_matches)
+        if len(norm_gens) >= 2:
+            return True, f"Сборный каталог нескольких поколений памяти ({', '.join(sorted(['DDR' + g for g in norm_gens]))})"
+
+    # 7. RAM mixed form-factors in title (ПК и ноутбук, DIMM и SODIMM)
+    if RAM_MULTI_FORM_FACTOR_REGEX.search(title):
+        return True, "Сборный каталог памяти (ПК и ноутбук в одном объявлении)"
+
+    # 8. RAM multiple capacities in title (e.g. 8gb,16gb,32gb or 8/16/32)
+    if RAM_MULTI_CAPACITY_REGEX.search(title):
+        return True, "Сборный каталог нескольких объёмов памяти в названии"
+
     return False, "OK"
 
 
@@ -256,5 +297,16 @@ def check_description_bait(combined_text: str, query: str = "") -> Tuple[bool, s
     is_bait, reason = check_bait_phrases(combined_text)
     if is_bait:
         return True, reason
+
+    # 3. Detect multi-item price list bullet points in description (e.g. "- DDR3 4 Гб 1800", "- DDR3 8 Гб 2500")
+    price_lines = re.findall(
+        r"(?:^|\n)\s*[-*•\d\)]+\s*.*?(\d{3,6})\s*(?:руб|р|₽|\b)",
+        combined_text,
+        re.IGNORECASE
+    )
+    if len(price_lines) >= 2:
+        # Check if the lines contain hardware terms
+        if re.search(r"\b(?:ddr|гб|gb|продам|озу|видеокарт|ryzen|core|intel|asus|msi)\b", combined_text, re.IGNORECASE):
+            return True, "Прайс-лист на несколько комплектующих в описании"
 
     return False, "OK"

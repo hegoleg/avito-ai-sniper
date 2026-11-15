@@ -66,6 +66,14 @@ from verification_queue import (
     BackoffManager
 )
 from hardware_catalog import search_catalog, get_item_by_id
+from ram_knowledge import (
+    SERVER_PATTERNS as RAM_SERVER_PATTERNS,
+    LAPTOP_PATTERNS as RAM_LAPTOP_PATTERNS,
+    MISMATCH_PATTERNS as RAM_MISMATCH_PATTERNS,
+    extract_ram_type,
+    extract_capacity_and_kit,
+    extract_frequency
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -137,6 +145,25 @@ class SearchTarget:
         self.is_gpu_search = bool(re.search(r"\b(rtx|gtx|rx|видеокарт|geforce|radeon|gpu)\b", q_lower))
         self.allow_mobile = bool(re.search(r"\b(mobile|мобайл|\bm\b|ноутбук)\b", q_lower))
 
+        # Auto-detect if this is a RAM search to protect against laptop / server / capacity mismatch
+        self.is_ram_search = bool(re.search(r"\b(ddr\d?|озу|память|ram)\b", q_lower))
+        self.allow_sodimm = bool(re.search(r"\b(sodimm|so-dimm|ноутбук|laptop|ноута)\b", q_lower))
+        self.allow_server = bool(re.search(r"\b(ecc|reg|regg|сервер|server)\b", q_lower))
+
+        # Extract target RAM capacity if specified in query (e.g. 16gb, 32gb, 8gb, 64gb)
+        self.target_ram_capacity = None
+        if self.is_ram_search:
+            m_cap = re.search(r"\b(4|8|16|32|64|128)\s*(?:gb|гб)\b", q_lower)
+            if m_cap:
+                self.target_ram_capacity = int(m_cap.group(1))
+
+        # Extract target RAM frequency if specified in query (e.g. 3200, 3600, etc.)
+        self.target_ram_freq = None
+        if self.is_ram_search:
+            m_freq = re.search(r"\b(1600|2133|2400|2666|2933|3000|3200|3600|4000|4800|5200|5600|6000)\b", q_lower)
+            if m_freq:
+                self.target_ram_freq = int(m_freq.group(1))
+
     def quick_filter(self, item: dict) -> Tuple[bool, str]:
         """
         Fast preliminary filter applied on search card snippet.
@@ -174,6 +201,34 @@ class SearchTarget:
             for p in GPU_ACCESSORY_PATTERNS:
                 if re.search(p, eval_text):
                     return False, "Кулер, охлаждение или коробка (не сама видеокарта)"
+
+        # Check RAM auto-protections (laptop, server, mismatch, capacity, frequency)
+        if self.is_ram_search:
+            if not self.allow_sodimm:
+                for p in RAM_LAPTOP_PATTERNS:
+                    if re.search(p, eval_text):
+                        return False, "Память для ноутбука (SO-DIMM / ноутбук)"
+            if not self.allow_server:
+                for p in RAM_SERVER_PATTERNS:
+                    if re.search(p, eval_text):
+                        return False, "Серверная память (ECC REG)"
+            for p in RAM_MISMATCH_PATTERNS:
+                if re.search(p, eval_text):
+                    return False, "Разнопарные плашки / солянка"
+
+            # Check capacity mismatch
+            if self.target_ram_capacity:
+                cap, is_kit = extract_capacity_and_kit(raw_full_text)
+                if cap is not None and cap < self.target_ram_capacity:
+                    return False, f"Объём памяти ({cap} ГБ) меньше искомого ({self.target_ram_capacity} ГБ)"
+                if self.target_ram_capacity >= 16:
+                    if re.search(r"\b8\s*(?:gb|гб)\b", eval_text) and not re.search(r"\b(?:16|32|64)\s*(?:gb|гб)?\b|2\s*[xх*]\s*8", eval_text):
+                        return False, "Объём памяти 8 ГБ (искали 16+ ГБ)"
+
+            # Check frequency mismatch
+            if self.target_ram_freq and self.target_ram_freq >= 3000:
+                if re.search(r"\b(2133|2400|2666)\b", eval_text) and str(self.target_ram_freq) not in eval_text:
+                    return False, f"Частота памяти ниже требуемой ({self.target_ram_freq} МГц)"
 
         # Check user exclude words (with word boundaries on masked text)
         for ew in self.exclude_words:
@@ -225,6 +280,41 @@ class SearchTarget:
             for p in GPU_ACCESSORY_PATTERNS:
                 if re.search(p, eval_text):
                     return False, "В описании указано охлаждение / кулер, а не видеокарта"
+
+        # Check RAM auto-protections in full text and specifications
+        if self.is_ram_search:
+            if not self.allow_sodimm:
+                for p in RAM_LAPTOP_PATTERNS:
+                    if re.search(p, eval_text):
+                        return False, "В описании указана память для ноутбука (SO-DIMM)"
+                if any(k in eval_text for k in ["sodimm", "so-dimm", "ноутбук", "для ноутбука"]):
+                    return False, "Форм-фактор SODIMM / для ноутбука в описании или характеристиках"
+            if not self.allow_server:
+                for p in RAM_SERVER_PATTERNS:
+                    if re.search(p, eval_text):
+                        return False, "Серверная память (ECC REG) в описании"
+            for p in RAM_MISMATCH_PATTERNS:
+                if re.search(p, eval_text):
+                    return False, "В описании указаны разнопарные плашки / солянка"
+
+            if self.target_ram_capacity:
+                cap, is_kit = extract_capacity_and_kit(combined_text)
+                if cap is not None and cap < self.target_ram_capacity:
+                    return False, f"Объём памяти в описании ({cap} ГБ) меньше искомого ({self.target_ram_capacity} ГБ)"
+                if self.target_ram_capacity >= 16:
+                    # Check characteristics: "Объём одного модуля, ГБ: 8" and "Количество модулей в комплекте: 1"
+                    m_one = re.search(r"объём одного модуля[^\d]*(\d+)", eval_text)
+                    m_cnt = re.search(r"количество модулей[^\d]*(\d+)", eval_text)
+                    if m_one and m_cnt:
+                        total_spec_cap = int(m_one.group(1)) * int(m_cnt.group(1))
+                        if total_spec_cap < self.target_ram_capacity:
+                            return False, f"Общий объём по характеристикам ({total_spec_cap} ГБ) меньше искомого ({self.target_ram_capacity} ГБ)"
+                    elif re.search(r"\b8\s*(?:gb|гб)\b", eval_text) and not re.search(r"\b(?:16|32|64)\s*(?:gb|гб)?\b|2\s*[xх*]\s*8", eval_text):
+                        return False, "Объём памяти 8 ГБ в описании (искали 16+ ГБ)"
+
+            if self.target_ram_freq and self.target_ram_freq >= 3000:
+                if re.search(r"\b(2133|2400|2666)\b", eval_text) and str(self.target_ram_freq) not in eval_text:
+                    return False, f"Частота памяти в описании ниже требуемой ({self.target_ram_freq} МГц)"
 
         for ew in self.exclude_words:
             pattern = r"(?<![a-zA-Z0-9а-яА-ЯёЁ])" + re.escape(ew) + r"(?![a-zA-Z0-9а-яА-ЯёЁ])"

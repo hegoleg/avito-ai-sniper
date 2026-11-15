@@ -33,7 +33,7 @@ from database import (
 )
 from scraper import AvitoScraper
 from anti_bait import check_listing_bait, check_description_bait
-from negation_filter import mask_negations
+from negation_filter import mask_negations, is_reserved_text
 from universal_sniper import SearchTarget, DEFAULT_EXCLUDES, GPU_MOBILE_PATTERNS, GPU_ACCESSORY_PATTERNS
 from hardware_catalog import (
     HARDWARE_CATALOG,
@@ -374,7 +374,7 @@ def get_smart_top_deals(query: str, min_price: Optional[int] = None, max_price: 
     clean_q_norm = re.sub(r'(\d+)\s*[хx]\b', r'\1x', clean_q)
     
     is_gpu = bool(re.search(r'\b(rtx|gtx|rx|видеокарт|geforce|radeon|gpu)\b', clean_q_norm))
-    is_ram = bool(re.search(r'\b(ddr|озу|память|ram)\b', clean_q_norm))
+    is_ram = bool(re.search(r'\b(ddr\d?|озу|память|ram)\b', clean_q_norm))
 
     # Extract primary model tokens (e.g. "5600x", "3070", "b550m", "3200")
     stop_words = {'amd', 'intel', 'nvidia', 'процессор', 'видеокарта', 'для', 'плата', 'материнская', 'память', 'оперативная', 'кулер', 'блок', 'питания', 'корпус', 'со', 'стеклом', 'atx', 'matx'}
@@ -399,6 +399,38 @@ def get_smart_top_deals(query: str, min_price: Optional[int] = None, max_price: 
                 
             t_norm = re.sub(r'(\d+)\s*[хx]\b', r'\1x', v["title"].lower())
             v_query = (v["query"] or "").lower()
+
+            # RAM validation for verified deals
+            if is_ram:
+                # 1. Laptop / SODIMM
+                if re.search(r'\b(sodimm|so-dimm|ноутбук\w*|для\s+ноутбук\w*|ноута|laptop)\b', t_norm):
+                    mark_deal_reserved_or_inactive(iid)
+                    continue
+                # 2. Server RAM
+                if re.search(r'\b(ecc|reg|regg|серверн\w*|сервер\b|rdimm|lrdimm|xeon|x99|2011)\b', t_norm):
+                    mark_deal_reserved_or_inactive(iid)
+                    continue
+                # 3. Multi-generation RAM catalog (DDR3 DDR4)
+                gens = re.findall(r'\bddr\s*([2-5])\b', t_norm)
+                if len(set(gens)) >= 2:
+                    mark_deal_reserved_or_inactive(iid)
+                    continue
+                # 4. Capacity mismatch: if query is 16GB, reject single 8gb
+                if any(k in clean_q_norm for k in ["16gb", "16 gb", "16гб"]):
+                    if re.search(r'\b8\s*(?:gb|гб)\b', t_norm) and not re.search(r'\b(?:16|32|64)\s*(?:gb|гб)?\b|2\s*[xх*]\s*8', t_norm):
+                        mark_deal_reserved_or_inactive(iid)
+                        continue
+                # 5. Frequency mismatch: if query is 3200, reject lower frequency
+                if "3200" in clean_q_norm:
+                    if re.search(r'\b(2133|2400|2666)\b', t_norm) and "3200" not in t_norm:
+                        mark_deal_reserved_or_inactive(iid)
+                        continue
+
+            # GPU validation for verified deals
+            if is_gpu:
+                if any(re.search(pat, t_norm) for pat in GPU_MOBILE_PATTERNS + GPU_ACCESSORY_PATTERNS):
+                    mark_deal_reserved_or_inactive(iid)
+                    continue
 
             # Strict match: all key tokens must be in verified deal title or original query
             if all(k in t_norm or k in v_query for k in key_tokens):
@@ -437,6 +469,9 @@ def get_smart_top_deals(query: str, min_price: Optional[int] = None, max_price: 
                 continue
 
             full_text = f"{t_norm} {(r['raw_description'] or '').lower()}"
+            if is_reserved_text(full_text):
+                continue
+
             masked_eval = mask_negations(full_text).lower()
 
             # Defect / trash check (with negation awareness)
