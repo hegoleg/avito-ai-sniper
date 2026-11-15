@@ -214,13 +214,37 @@ async def run_slot_scan(slot_id: str, query: str, min_price: Optional[int], max_
                         mark_deal_reserved_or_inactive(item_id)
                     continue
 
+                # Calculate savings against slot retail estimate
+                retail_est = 0
+                try:
+                    with get_connection() as conn:
+                        s_row = conn.execute("SELECT retail_est FROM pc_build WHERE slot_id = ?", (slot_id,)).fetchone()
+                        if s_row and s_row["retail_est"]:
+                            retail_est = s_row["retail_est"]
+                except Exception:
+                    pass
+
+                savings_rub = max(0, retail_est - price) if retail_est and retail_est > price else 0
+                savings_pct = round((savings_rub / retail_est) * 100, 1) if retail_est and retail_est > 0 else 0
+
                 deal_entry = {
                     "item_id": str(item_id),
                     "title": title,
                     "price": price,
                     "url": url,
                     "location": it.get("location", ""),
-                    "specs": target.query
+                    "specs": {
+                        "query": target.query,
+                        "seller_name": details.get("seller_name", ""),
+                        "seller_rating": details.get("seller_rating", ""),
+                        "seller_reviews": details.get("seller_reviews", ""),
+                        "seller_badge": details.get("seller_badge", ""),
+                        "has_delivery": details.get("has_delivery", False),
+                        "delivery_info": details.get("delivery_info", ""),
+                        "retail_est": retail_est,
+                        "savings_rub": savings_rub,
+                        "savings_pct": savings_pct
+                    }
                 }
                 save_verified_deal(deal_entry, query=target.query)
                 verified_count += 1
@@ -235,6 +259,133 @@ async def run_slot_scan(slot_id: str, query: str, min_price: Optional[int], max_
             scan_state["message"] = f"Ошибка: {e}"
         finally:
             scan_state["is_running"] = False
+
+
+active_verifying_queries = set()
+
+async def auto_verify_slot_candidates(query: str):
+    """
+    Automatic background verifier:
+    Silently takes uninspected candidate listings matching this query,
+    visits their pages in a background tab via Playwright,
+    runs full deep inspection (closing, reservation, defects, SODIMM, seller trust, savings),
+    and saves clean approved ones into verified_deals.
+    Zero user clicks needed — 100% automated!
+    """
+    clean_q = query.strip().lower()
+    if clean_q in active_verifying_queries:
+        return
+    active_verifying_queries.add(clean_q)
+
+    try:
+        scraper = await get_shared_scraper()
+        
+        # Resolve target and retail_est from pc_build slots
+        retail_est = 0
+        min_p = None
+        max_p = None
+        target = None
+        with get_connection() as conn:
+            s_row = conn.execute(
+                "SELECT * FROM pc_build WHERE LOWER(target_query) = ? OR LOWER(target_query) LIKE ? OR slot_id = ?",
+                (clean_q, f"%{clean_q}%", clean_q)
+            ).fetchone()
+            if s_row:
+                min_p = s_row["min_price"]
+                max_p = s_row["max_price"]
+                retail_est = s_row["retail_est"] or 0
+                target = SearchTarget(
+                    name=s_row["target_query"],
+                    query=s_row["target_query"],
+                    min_price=min_p,
+                    max_price=max_p,
+                    required_words=[w.strip() for w in (s_row["required_words"] or "").split(",") if w.strip()],
+                    exclude_words=[w.strip() for w in (s_row["exclude_words"] or "").split(",") if w.strip()]
+                )
+
+        if not target:
+            target = SearchTarget(name=query, query=query, min_price=min_p, max_price=max_p)
+
+        # Get candidates from listings not yet in verified_deals
+        with get_connection() as conn:
+            verified_ids = set(r[0] for r in conn.execute("SELECT item_id FROM verified_deals").fetchall())
+            rows = conn.execute("""
+                SELECT item_id, title, price, url, location, raw_description 
+                FROM listings 
+                WHERE price > 0
+                ORDER BY price ASC
+            """).fetchall()
+
+        to_inspect = []
+        for r in rows:
+            iid = str(r["item_id"])
+            if iid in verified_ids:
+                continue
+            if min_p and r["price"] < min_p:
+                continue
+            if max_p and r["price"] > max_p:
+                continue
+            ok, _ = target.quick_filter(dict(r))
+            if ok:
+                to_inspect.append(dict(r))
+            if len(to_inspect) >= 5:
+                break
+
+        for item in to_inspect:
+            url = item.get("url")
+            iid = str(item.get("item_id"))
+            if not url:
+                continue
+
+            details = await scraper.get_item_full_details(url)
+            combined_text = details.get("combined_text", "")
+            is_page_reserved = details.get("is_page_reserved", False)
+            is_closed = details.get("is_closed", False)
+
+            valid, reason = target.verify_full_details(
+                combined_text,
+                is_page_reserved=is_page_reserved,
+                is_closed=is_closed
+            )
+            if not valid:
+                mark_deal_reserved_or_inactive(iid)
+                # Purge invalid candidate from listings so it never surfaces
+                with get_connection() as conn:
+                    conn.execute("DELETE FROM listings WHERE item_id = ?", (iid,))
+                    conn.commit()
+                continue
+
+            savings_rub = max(0, retail_est - item["price"]) if retail_est and retail_est > item["price"] else 0
+            savings_pct = round((savings_rub / retail_est) * 100, 1) if retail_est and retail_est > 0 else 0
+
+            specs_dict = {
+                "query": target.query,
+                "seller_name": details.get("seller_name", ""),
+                "seller_rating": details.get("seller_rating", ""),
+                "seller_reviews": details.get("seller_reviews", ""),
+                "seller_badge": details.get("seller_badge", ""),
+                "has_delivery": details.get("has_delivery", False),
+                "delivery_info": details.get("delivery_info", ""),
+                "retail_est": retail_est,
+                "savings_rub": savings_rub,
+                "savings_pct": savings_pct
+            }
+
+            deal_entry = {
+                "item_id": iid,
+                "title": item["title"],
+                "price": item["price"],
+                "url": url,
+                "location": item.get("location", ""),
+                "specs": specs_dict
+            }
+            save_verified_deal(deal_entry, query=target.query)
+            logger.info("Auto-verified clean deal: %s (%s руб) for %s", item["title"], item["price"], target.query)
+
+    except Exception as e:
+        logger.debug("Auto-verifier error for %s: %s", query, e)
+    finally:
+        active_verifying_queries.discard(clean_q)
 
 
 # Routes
@@ -393,7 +544,7 @@ def get_smart_top_deals(query: str, min_price: Optional[int] = None, max_price: 
 
     with get_connection() as conn:
         # 1. Fetch from verified_deals
-        verified_rows = conn.execute("SELECT item_id, query, title, price, url, location FROM verified_deals WHERE is_active = 1").fetchall()
+        verified_rows = conn.execute("SELECT item_id, query, title, price, url, location, specs FROM verified_deals WHERE is_active = 1").fetchall()
         for v in verified_rows:
             iid = str(v["item_id"])
             p = v["price"]
@@ -440,13 +591,26 @@ def get_smart_top_deals(query: str, min_price: Optional[int] = None, max_price: 
             # Strict match: all key tokens must be in verified deal title or original query
             if all(k in t_norm or k in v_query for k in key_tokens):
                 seen_ids.add(iid)
+                specs_obj = {}
+                if v["specs"]:
+                    try:
+                        specs_obj = json.loads(v["specs"])
+                    except Exception:
+                        pass
                 results.append({
                     "item_id": iid,
                     "title": v["title"],
                     "price": p,
                     "url": v["url"],
                     "location": v["location"] or "РФ",
-                    "is_verified": True
+                    "is_verified": True,
+                    "seller_name": specs_obj.get("seller_name", ""),
+                    "seller_rating": specs_obj.get("seller_rating", ""),
+                    "seller_reviews": specs_obj.get("seller_reviews", ""),
+                    "seller_badge": specs_obj.get("seller_badge", ""),
+                    "has_delivery": specs_obj.get("has_delivery", False),
+                    "savings_rub": specs_obj.get("savings_rub", 0),
+                    "savings_pct": specs_obj.get("savings_pct", 0)
                 })
 
         # 2. Fetch from listings
@@ -518,8 +682,8 @@ def get_smart_top_deals(query: str, min_price: Optional[int] = None, max_price: 
                 "is_verified": False
             })
 
-    # Sort by price ascending (cheapest first)
-    results.sort(key=lambda x: x["price"])
+    # Sort: verified deals always first, then by price ascending
+    results.sort(key=lambda x: (not x.get("is_verified", False), x["price"]))
     return results[:limit]
 
 
@@ -548,7 +712,13 @@ async def get_deals_for_query(query: str, min_price: Optional[int] = None, max_p
         max_price=max_price,
         limit=12
     )
-    return {"deals": deals, "total": len(deals)}
+
+    # Automated background verification: if verified deals < 4, auto-verify candidates silently
+    verified_count = sum(1 for d in deals if d.get("is_verified"))
+    if verified_count < 4:
+        asyncio.create_task(auto_verify_slot_candidates(query))
+
+    return {"deals": deals, "total": len(deals), "verified_count": verified_count}
 
 
 @app.post("/api/scan/{slot_id}")

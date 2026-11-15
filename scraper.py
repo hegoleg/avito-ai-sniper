@@ -417,14 +417,34 @@ class AvitoScraper:
                 if delivery_btn:
                     has_delivery = True
 
-            # 3. Extract seller details
-            seller_name_el = await tab.query_selector('[data-marker="seller-info/name"], [data-marker="seller-info/label"]')
+            # 3. Extract seller details (name, rating, reviews count, verification badge)
+            seller_rating = ""
+            seller_reviews = ""
+            seller_badge = ""
+
+            seller_name_el = await tab.query_selector(
+                '[data-marker="seller-info/name"], [data-marker="seller-info/label"], [class*="seller-info-name"]'
+            )
             if seller_name_el:
                 seller_name = (await seller_name_el.inner_text()).strip()
 
-            seller_rating_el = await tab.query_selector('[data-marker="seller-info/rating"], [data-marker="seller-rating/score"]')
+            seller_rating_el = await tab.query_selector(
+                '[data-marker="seller-info/rating"], [data-marker="seller-rating/score"], [data-marker*="seller-rating"], [class*="seller-rating"]'
+            )
             if seller_rating_el:
-                seller_rating = (await seller_rating_el.inner_text()).strip()
+                rating_raw = (await seller_rating_el.inner_text()).strip()
+                m_score = re.search(r"(\d+[,.]\d+)", rating_raw)
+                if m_score:
+                    seller_rating = m_score.group(1).replace(",", ".")
+                m_rev = re.search(r"(\d+[\s\d]*\s*отзыв\w*)", rating_raw, re.IGNORECASE)
+                if m_rev:
+                    seller_reviews = m_rev.group(1).strip()
+
+            badge_el = await tab.query_selector(
+                '[data-marker*="seller-badge"], [class*="seller-badge"], span:has-text("подтверждены"), span:has-text("проверены")'
+            )
+            if badge_el:
+                seller_badge = (await badge_el.inner_text()).strip()
 
             return {
                 "full_description": desc,
@@ -435,6 +455,8 @@ class AvitoScraper:
                 "delivery_info": delivery_info,
                 "seller_name": seller_name,
                 "seller_rating": seller_rating,
+                "seller_reviews": seller_reviews,
+                "seller_badge": seller_badge,
                 "combined_text": f"{desc}\n{params_text}"
             }
         except Exception as e:

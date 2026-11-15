@@ -441,6 +441,41 @@
             display: inline-block;
         }
 
+        .deal-badge-savings {
+            font-size: 10px;
+            font-weight: 700;
+            color: #fb7185;
+            background: rgba(244, 63, 94, 0.15);
+            border: 1px solid rgba(244, 63, 94, 0.3);
+            border-radius: 4px;
+            padding: 1px 5px;
+            display: inline-block;
+        }
+
+        .deal-badge-seller {
+            font-size: 10px;
+            font-weight: 600;
+            color: #facc15;
+            background: rgba(250, 204, 21, 0.12);
+            border: 1px solid rgba(250, 204, 21, 0.25);
+            border-radius: 4px;
+            padding: 1px 5px;
+            display: inline-flex;
+            align-items: center;
+            gap: 3px;
+        }
+
+        .deal-badge-delivery {
+            font-size: 10px;
+            font-weight: 600;
+            color: #38bdf8;
+            background: rgba(56, 189, 248, 0.12);
+            border: 1px solid rgba(56, 189, 248, 0.25);
+            border-radius: 4px;
+            padding: 1px 5px;
+            display: inline-block;
+        }
+
         .deal-rank {
             font-size: 13px;
             font-weight: 800;
@@ -1039,18 +1074,33 @@
                     const item = document.createElement('div');
                     item.className = "deal-item";
                     const medal = idx === 0 ? "🥇" : idx === 1 ? "🥈" : idx === 2 ? "🥉" : `#${idx + 1}`;
-                    const badge = d.is_verified 
-                        ? `<span class="deal-badge-verified">✅ Проверено</span>`
+                    const badgeVerified = d.is_verified 
+                        ? `<span class="deal-badge-verified">✅ Проверено ИИ</span>`
                         : `<span style="font-size: 10px; color: #94a3b8; background: #1c273e; padding: 1px 4px; border-radius: 4px;">С Авито</span>`;
 
+                    const badgeSavings = (d.savings_pct && d.savings_pct > 0)
+                        ? `<span class="deal-badge-savings" title="Выгода относительно розницы: -${(d.savings_rub || 0).toLocaleString('ru-RU')} ₽">🔥 -${d.savings_pct}%</span>`
+                        : '';
+
+                    const badgeSeller = d.seller_rating
+                        ? `<span class="deal-badge-seller" title="Рейтинг продавца на Авито">⭐ ${d.seller_rating} ${d.seller_reviews ? '(' + d.seller_reviews + ')' : ''}</span>`
+                        : (d.seller_name ? `<span style="font-size: 10px; color: #94a3b8;">👤 ${d.seller_name}</span>` : '');
+
+                    const badgeDelivery = d.has_delivery
+                        ? `<span class="deal-badge-delivery" title="Авито Доставка доступна">🚚 Доставка</span>`
+                        : '';
+
                     item.innerHTML = `
-                        <div style="display: flex; align-items: center; gap: 8px; overflow: hidden;">
+                        <div style="display: flex; align-items: center; gap: 8px; overflow: hidden; flex: 1;">
                             <span class="deal-rank">${medal}</span>
-                            <div class="deal-item-info">
-                                <div class="deal-title" title="${d.title}">${d.title}</div>
-                                <div style="display: flex; gap: 6px; align-items: center; margin-top: 2px;">
+                            <div class="deal-item-info" style="min-width: 0; flex: 1;">
+                                <div class="deal-title" title="${d.title}" style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 600;">${d.title}</div>
+                                <div style="display: flex; flex-wrap: wrap; gap: 5px; align-items: center; margin-top: 3px;">
                                     <span class="deal-price">${d.price.toLocaleString('ru-RU')} ₽</span>
-                                    ${badge}
+                                    ${badgeSavings}
+                                    ${badgeVerified}
+                                    ${badgeSeller}
+                                    ${badgeDelivery}
                                     <span class="deal-loc">• ${d.location || 'РФ'}</span>
                                 </div>
                             </div>

@@ -211,6 +211,12 @@ def get_stats(db_path: str = DB_PATH) -> Dict[str, int]:
 
 
 def save_verified_deal(item: Dict[str, Any], query: str = "", db_path: str = DB_PATH):
+    specs_raw = item.get("specs")
+    if isinstance(specs_raw, dict):
+        specs_str = json.dumps(specs_raw, ensure_ascii=False)
+    else:
+        specs_str = str(specs_raw or "")
+
     with get_connection(db_path) as conn:
         conn.execute("""
             INSERT INTO verified_deals (item_id, query, title, price, url, location, specs, is_active)
@@ -218,6 +224,7 @@ def save_verified_deal(item: Dict[str, Any], query: str = "", db_path: str = DB_
             ON CONFLICT(item_id) DO UPDATE SET
                 price = excluded.price,
                 query = excluded.query,
+                specs = excluded.specs,
                 is_active = 1,
                 verified_at = CURRENT_TIMESTAMP
         """, (
@@ -227,7 +234,7 @@ def save_verified_deal(item: Dict[str, Any], query: str = "", db_path: str = DB_
             item.get("price", 0),
             item.get("url", ""),
             item.get("location", ""),
-            item.get("specs", "")
+            specs_str
         ))
         conn.commit()
 
