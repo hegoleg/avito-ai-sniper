@@ -9,21 +9,30 @@ import os
 import logging
 from typing import Optional, Dict, Any, List
 from datetime import datetime
+from contextlib import contextmanager
 
 logger = logging.getLogger(__name__)
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "avito_monitor.db")
 
 
-def get_connection(db_path: str = DB_PATH) -> sqlite3.Connection:
-    conn = sqlite3.connect(db_path)
+@contextmanager
+def get_connection(db_path: str = DB_PATH):
+    """Context manager that guarantees the SQLite connection is closed upon exit."""
+    conn = sqlite3.connect(db_path, timeout=30.0)
     conn.row_factory = sqlite3.Row
-    return conn
+    try:
+        yield conn
+    finally:
+        conn.close()
 
 
 def init_db(db_path: str = DB_PATH):
-    """Initializes tables and indexes."""
+    """Initializes tables, executes one-time migrations, and builds indexes."""
     with get_connection(db_path) as conn:
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA busy_timeout = 5000")
+
         conn.execute("""
             CREATE TABLE IF NOT EXISTS listings (
                 item_id TEXT PRIMARY KEY,
@@ -59,10 +68,34 @@ def init_db(db_path: str = DB_PATH):
                 FOREIGN KEY (item_id) REFERENCES listings (item_id)
             )
         """)
-        
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS verified_deals (
+                item_id TEXT PRIMARY KEY,
+                query TEXT DEFAULT '',
+                title TEXT NOT NULL,
+                price INTEGER NOT NULL,
+                url TEXT NOT NULL,
+                location TEXT,
+                specs TEXT DEFAULT '',
+                verified_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                is_active INTEGER DEFAULT 1
+            )
+        """)
+
+        # One-time idempotent migration for existing databases
+        columns = [row["name"] for row in conn.execute("PRAGMA table_info(verified_deals)").fetchall()]
+        if "query" not in columns:
+            conn.execute("ALTER TABLE verified_deals ADD COLUMN query TEXT DEFAULT ''")
+        if "specs" not in columns:
+            conn.execute("ALTER TABLE verified_deals ADD COLUMN specs TEXT DEFAULT ''")
+        if "is_active" not in columns:
+            conn.execute("ALTER TABLE verified_deals ADD COLUMN is_active INTEGER DEFAULT 1")
+
         conn.execute("CREATE INDEX IF NOT EXISTS idx_listings_is_deal ON listings(is_deal)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_listings_notified ON listings(notified)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_listings_first_seen ON listings(first_seen_at)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_verified_deals_active_query ON verified_deals(is_active, query, price)")
         conn.commit()
     logger.info("Database initialized successfully at %s", db_path)
 
@@ -174,34 +207,7 @@ def get_stats(db_path: str = DB_PATH) -> Dict[str, int]:
         }
 
 
-def init_verified_table(db_path: str = DB_PATH):
-    with get_connection(db_path) as conn:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS verified_deals (
-                item_id TEXT PRIMARY KEY,
-                query TEXT DEFAULT '',
-                title TEXT NOT NULL,
-                price INTEGER NOT NULL,
-                url TEXT NOT NULL,
-                location TEXT,
-                specs TEXT DEFAULT '',
-                verified_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                is_active INTEGER DEFAULT 1
-            )
-        """)
-        try:
-            conn.execute("ALTER TABLE verified_deals ADD COLUMN query TEXT DEFAULT ''")
-        except Exception:
-            pass
-        try:
-            conn.execute("ALTER TABLE verified_deals ADD COLUMN specs TEXT DEFAULT ''")
-        except Exception:
-            pass
-        conn.commit()
-
-
 def save_verified_deal(item: Dict[str, Any], query: str = "", db_path: str = DB_PATH):
-    init_verified_table(db_path)
     with get_connection(db_path) as conn:
         conn.execute("""
             INSERT INTO verified_deals (item_id, query, title, price, url, location, specs, is_active)
@@ -224,14 +230,12 @@ def save_verified_deal(item: Dict[str, Any], query: str = "", db_path: str = DB_
 
 
 def mark_deal_reserved_or_inactive(item_id: str, db_path: str = DB_PATH):
-    init_verified_table(db_path)
     with get_connection(db_path) as conn:
         conn.execute("UPDATE verified_deals SET is_active = 0 WHERE item_id = ?", (str(item_id),))
         conn.commit()
 
 
 def get_all_time_top_deals(query: Optional[str] = None, limit: int = 5, db_path: str = DB_PATH) -> List[Dict[str, Any]]:
-    init_verified_table(db_path)
     with get_connection(db_path) as conn:
         if query and query.strip():
             q_clean = query.strip().lower()

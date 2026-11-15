@@ -13,24 +13,74 @@ from urllib.parse import urlencode
 
 from playwright.async_api import async_playwright, Page, BrowserContext
 from config import Config
+from negation_filter import is_reserved_text
 
 logger = logging.getLogger(__name__)
 
 
 def clean_price(price_raw: str) -> Optional[int]:
-    """Extracts integer price in rubles from string (e.g. '2 500 ₽' -> 2500)."""
-    if not price_raw:
+    """
+    Extracts integer price in rubles from string, safely handling:
+    - Strike-through / old prices (e.g. '2 500 ₽ 3 000 ₽' -> 2500)
+    - Discount badges and percentages (e.g. '2 500 ₽ -17% 3 000 ₽' -> 2500)
+    - Multiline price blocks (e.g. '2 500 ₽\\n3 000 ₽' -> 2500)
+    - Plain numbers without currency (e.g. '15000' -> 15000)
+    - Ranges and prefix text (e.g. 'от 4 500 ₽' -> 4500)
+    """
+    if not price_raw or not isinstance(price_raw, str):
         return None
-    cleaned = re.sub(r"[^\d]", "", price_raw)
-    try:
-        return int(cleaned) if cleaned else None
-    except ValueError:
-        return None
+
+    # 1. If multiline, evaluate the first non-empty line
+    lines = [line.strip() for line in price_raw.splitlines() if line.strip()]
+    first_line = lines[0] if lines else price_raw
+
+    # Strip percentage tokens (e.g. -17%, +5%)
+    first_line_clean = re.sub(r"[-+]?\d+%", "", first_line)
+
+    # Strip decimal kopecks (e.g. ,00 or .00 or ,50) before currency symbol or end of string
+    first_line_clean = re.sub(r"[,.]\d{2}(?=\s*(?:₽|руб|р\b|$))", "", first_line_clean)
+
+    # 2. Extract first price token associated with ruble currency symbol
+    curr_pat = r"(\d{1,3}(?:[\s\xa0]\d{3})+|\d+)\s*(?:₽|руб(?:лей|\.?)?|р\b)"
+    currency_match = re.search(curr_pat, first_line_clean, re.IGNORECASE)
+    if currency_match:
+        digits = re.sub(r"[^\d]", "", currency_match.group(1))
+        if digits:
+            try:
+                return int(digits)
+            except ValueError:
+                pass
+
+    # 3. Fallback: first currency match in full text
+    full_clean = re.sub(r"[-+]?\d+%", "", price_raw)
+    full_clean = re.sub(r"[,.]\d{2}(?=\s*(?:₽|руб|р\b|$))", "", full_clean)
+    currency_match_full = re.search(curr_pat, full_clean, re.IGNORECASE)
+    if currency_match_full:
+        digits = re.sub(r"[^\d]", "", currency_match_full.group(1))
+        if digits:
+            try:
+                return int(digits)
+            except ValueError:
+                pass
+
+    # 4. Fallback: extract first standalone number sequence
+    num_pat = r"(\d{1,3}(?:[\s\xa0]\d{3})+|\d+)"
+    num_match = re.search(num_pat, first_line_clean)
+    if num_match:
+        digits = re.sub(r"[^\d]", "", num_match.group(1))
+        if digits:
+            try:
+                return int(digits)
+            except ValueError:
+                pass
+
+    return None
 
 
 class AvitoScraper:
-    def __init__(self, config: Config):
+    def __init__(self, config: Config, notifier: Optional[Any] = None):
         self.config = config
+        self.notifier = notifier
         self.profile_dir = os.path.abspath(self.config.user_data_dir)
         os.makedirs(self.profile_dir, exist_ok=True)
         self._pw = None
@@ -173,10 +223,23 @@ class AvitoScraper:
                 if not item_id or not title:
                     continue
                     
-                # Price
-                price_tag = await el.query_selector('[data-marker="item-price"]')
-                price_text = await price_tag.inner_text() if price_tag else ""
-                price = clean_price(price_text)
+                # Price extraction: check Schema.org meta first, then fallback to active item-price marker
+                price = None
+                meta_price = await el.query_selector('meta[itemprop="price"]')
+                if meta_price:
+                    meta_content = await meta_price.get_attribute("content")
+                    if meta_content:
+                        price = clean_price(meta_content)
+
+                if price is None:
+                    # Target active price element specifically, avoiding old-price tags
+                    price_tag = await el.query_selector(
+                        '[data-marker="item-price"] strong, '
+                        '[data-marker="item-price"] [class*="price-value"], '
+                        '[data-marker="item-price"]'
+                    )
+                    price_text = await price_tag.inner_text() if price_tag else ""
+                    price = clean_price(price_text)
                 
                 # Location
                 geo_tag = await el.query_selector('[class*="geo-root"], [data-marker="item-address"]')
@@ -190,8 +253,8 @@ class AvitoScraper:
                 img_tag = await el.query_selector('img[class*="photo"], img[itemprop="image"], img')
                 image_url = await img_tag.get_attribute("src") if img_tag else ""
                 
-                card_full_text = (await el.inner_text()).lower()
-                is_reserved = "зарезервир" in card_full_text or "бронь" in card_full_text or "забронир" in card_full_text
+                card_full_text = await el.inner_text()
+                is_reserved = is_reserved_text(card_full_text)
 
                 items.append({
                     "item_id": str(item_id),
@@ -219,12 +282,38 @@ class AvitoScraper:
             else:
                 break
 
-        current_title = await page.title()
-        if "проблема с ip" in current_title.lower() or "доступ ограничен" in current_title.lower():
-            logger.warning("Avito captcha challenge encountered!")
+        current_title = (await page.title()).lower()
+        is_ip_block = "проблема с ip" in current_title or "доступ ограничен" in current_title
+        geetest_el = await page.query_selector('[class*="geetest"], .button-continue, button:has-text("Продолжить")')
+        is_challenge = is_ip_block or bool(geetest_el)
+
+        if is_challenge:
+            reason = "GeeTest слайдер-пазл" if geetest_el else "Ограничение IP / Доступ заблокирован"
+            logger.warning("Avito captcha challenge encountered: %s (Title: %s)", reason, current_title)
+
+            # Capture screenshot for alert
+            screenshot_path = os.path.join(self.profile_dir, "captcha_alert.png")
+            try:
+                await page.screenshot(path=screenshot_path)
+            except Exception as ss_err:
+                logger.debug("Could not take captcha screenshot: %s", ss_err)
+                screenshot_path = None
+
+            # Trigger captcha alert if notifier is configured
+            if self.notifier:
+                try:
+                    await self.notifier.send_captcha_alert(
+                        reason=reason,
+                        page_url=page.url,
+                        screenshot_path=screenshot_path,
+                        headless=self.config.headless
+                    )
+                except Exception as notif_err:
+                    logger.error("Failed to send captcha alert via notifier: %s", notif_err)
+
             if not self.config.headless:
                 print("\n" + "!" * 70)
-                print("  [!] ОБНАРУЖЕНА КАПЧА: Передвиньте слайдер в открывшемся окне Chrome!")
+                print(f"  [!] ОБНАРУЖЕНА КАПЧА ({reason}): Передвиньте слайдер в открывшемся окне Chrome!")
                 print("  После прохождения сессия сохранится, и дальше капчи не будет.")
                 print("!" * 70 + "\n")
                 btn = await page.query_selector('button:has-text("Продолжить"), .button-continue, button')
@@ -235,16 +324,18 @@ class AvitoScraper:
                         pass
                 for _ in range(60):
                     await page.wait_for_timeout(1000)
-                    t = await page.title()
-                    if "проблема с ip" not in t.lower() and "доступ ограничен" not in t.lower():
+                    t = (await page.title()).lower()
+                    if "проблема с ip" not in t and "доступ ограничен" not in t:
                         logger.info("Captcha resolved by user!")
                         await page.wait_for_timeout(2000)
                         break
 
-    async def get_item_full_details(self, item_url: str) -> Dict[str, str]:
+    async def get_item_full_details(self, item_url: str) -> Dict[str, Any]:
         """
-        Visits the item page in a background tab to extract full description
-        and Avito specification parameters (ECC, Registered, Form Factor, etc.).
+        Visits the item page in a background tab to extract full description,
+        Avito specification parameters, reservation status, delivery options,
+        and seller information. Scoped strictly to item blocks, avoiding
+        false positives from recommendation carousels.
         """
         if not item_url or not item_url.startswith("http"):
             return {}
@@ -268,30 +359,80 @@ class AvitoScraper:
                     pass
             params_text = " | ".join(params)
             
-            # Check reservation on page
-            body_text = (await tab.inner_text("body")).lower()
-            is_reserved = any(phrase in body_text for phrase in [
-                "товар зарезервирован",
-                "зарезервировано",
-                "заказ оформлен",
-                "товар в резерве",
-                "в резерве",
-                "объявление снято",
-                "снято с публикации",
-                "товар продан",
-                "объявление закрыто"
-            ])
-            if not is_reserved:
-                res_el = await tab.query_selector('[data-marker*="reserved"], [class*="reserved"], [data-marker="delivery-item-status"], [class*="delivery-status"]')
-                if res_el:
-                    res_text = (await res_el.inner_text()).lower()
-                    if "зарезервир" in res_text or "бронь" in res_text or "оформлен" in res_text:
-                        is_reserved = True
+            # Localized status checks strictly scoped to the listing action / delivery block
+            # (Completely excludes recommendation blocks and similar items carousels)
+            is_reserved = False
+            is_closed = False
+            has_delivery = False
+            delivery_info = ""
+            seller_name = ""
+            seller_rating = ""
+
+            # 1. Check for closed/archived listing banner strictly within main container
+            main_container = await tab.query_selector('[data-marker="item-view"], main') or tab
+            closed_el = await main_container.query_selector(
+                '[data-marker="item-view/closed-warning"], [data-marker="closed-item-warning"]'
+            )
+            if closed_el:
+                closed_text = (await closed_el.inner_text()).lower()
+                if any(p in closed_text for p in ["закрыто", "снято с публикации", "товар продан"]):
+                    is_closed = True
+                    is_reserved = True
+
+            # 2. Scope reservation & delivery strictly to the action container
+            action_block = await tab.query_selector(
+                '[data-marker="item-view/actions"], '
+                '[class*="style-item-price-and-actions"], '
+                '[class*="item-view-actions"]'
+            )
+            delivery_block = None
+            if action_block:
+                delivery_block = await action_block.query_selector(
+                    '[data-marker="delivery-item-status"], [data-marker="delivery-block"], [data-marker="item-view/delivery"], [class*="delivery-block"]'
+                )
+            if not delivery_block:
+                delivery_block = await tab.query_selector(
+                    '[data-marker="item-view"] [data-marker="delivery-item-status"], [data-marker="item-view"] [class*="delivery-block"]'
+                )
+
+            if delivery_block:
+                delivery_info = (await delivery_block.inner_text()).strip()
+                del_lower = delivery_info.lower()
+                if is_reserved_text(del_lower):
+                    is_reserved = True
+                if "доставка" in del_lower and "недоступна" not in del_lower:
+                    has_delivery = True
+
+            if action_block and not is_reserved:
+                action_text = (await action_block.inner_text()).lower()
+                if is_reserved_text(action_text):
+                    is_reserved = True
+                
+                # Check delivery button
+                delivery_btn = await action_block.query_selector(
+                    'button[data-marker*="delivery"], [data-marker*="delivery-button"]'
+                )
+                if delivery_btn:
+                    has_delivery = True
+
+            # 3. Extract seller details
+            seller_name_el = await tab.query_selector('[data-marker="seller-info/name"], [data-marker="seller-info/label"]')
+            if seller_name_el:
+                seller_name = (await seller_name_el.inner_text()).strip()
+
+            seller_rating_el = await tab.query_selector('[data-marker="seller-info/rating"], [data-marker="seller-rating/score"]')
+            if seller_rating_el:
+                seller_rating = (await seller_rating_el.inner_text()).strip()
 
             return {
                 "full_description": desc,
                 "params_text": params_text,
                 "is_page_reserved": is_reserved,
+                "is_closed": is_closed,
+                "has_delivery": has_delivery,
+                "delivery_info": delivery_info,
+                "seller_name": seller_name,
+                "seller_rating": seller_rating,
                 "combined_text": f"{desc}\n{params_text}"
             }
         except Exception as e:

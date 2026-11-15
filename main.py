@@ -1,6 +1,7 @@
 """
-Avito RAM Sniper - Main Entry Point & Daemon
-Monitors Avito for RAM deals, analyzes listings with AI, and sends alerts to Telegram.
+Avito RAM Sniper - Main Entry Point & Daemon.
+Delegates scanning and monitoring to the unified universal_sniper pipeline,
+eliminating duplicate execution paths, shallow parsing, and fixed sleeps.
 """
 
 import argparse
@@ -8,17 +9,31 @@ import asyncio
 import logging
 import os
 import sys
-import time
 from datetime import datetime
 
 # Ensure utf-8 output in Windows consoles
-sys.stdout.reconfigure(encoding="utf-8")
+if sys.platform == "win32":
+    sys.stdout.reconfigure(encoding="utf-8")
+
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
 from config import load_config
 from database import init_db, is_item_seen, save_listing, mark_notified, get_stats
 from scraper import AvitoScraper
 from ai_analyzer import AIAnalyzer
 from notifier import TelegramNotifier
+from universal_sniper import (
+    SearchTarget,
+    scan_target_once,
+    load_presets
+)
+from verification_queue import (
+    VerificationQueue,
+    async_sleep_jitter,
+    BackoffManager
+)
 
 # Logging configuration
 logging.basicConfig(
@@ -29,75 +44,82 @@ logging.basicConfig(
 logger = logging.getLogger("AvitoSniper")
 
 
-async def run_single_scan(config, scraper, analyzer, notifier):
-    """Executes a single scan cycle."""
-    logger.info("--- Начинаем сканирование новых объявлений по ОЗУ ---")
-    items = await scraper.scrape_new_listings(max_items=35)
-    
-    if not items:
-        logger.info("Новых объявлений не найдено или сработала защита.")
-        return 0
+async def run_single_scan(config=None, scraper=None, analyzer=None, notifier=None):
+    """
+    Executes a single verified scan cycle via the universal_sniper pipeline,
+    benefiting from the smart verification queue, anti-bait filters,
+    action-block reservation checks, and Telegram deal alerts.
+    """
+    config = config or load_config()
+    notifier = notifier or TelegramNotifier(bot_token=config.telegram_bot_token, chat_id=config.telegram_chat_id)
+    should_close = False
+    if scraper is None:
+        scraper = AvitoScraper(config, notifier=notifier)
+        should_close = True
+        await scraper.start()
+    else:
+        scraper.notifier = notifier
 
-    new_count = 0
-    deals_count = 0
-
-    for item in items:
-        item_id = item["item_id"]
-        
-        # Check if already seen
-        if is_item_seen(item_id):
-            continue
-            
-        new_count += 1
-        title = item["title"]
-        price = item["price"]
-        desc = item["raw_description"]
-        location = item["location"]
-        
-        logger.info("Анализ объявления [%s]: '%s' | %s ₽", item_id, title, price)
-        
-        # Analyze with AI / Heuristics
-        analysis = analyzer.analyze(title, price, desc, location)
-        
-        # Merge analysis results into item dict
-        item.update(analysis)
-        
-        is_deal = item.get("is_deal", False)
-        if is_deal:
-            deals_count += 1
-            logger.info("🔥 НАЙДЕНА ВЫГОДНАЯ СДЕЛКА! %s (%s)", title, item.get("ai_summary"))
-            # Send notification
-            sent = notifier.send_deal_alert(item)
-            item["notified"] = 1 if sent else 0
-        else:
-            item["notified"] = 0
-            
-        # Save to database
-        save_listing(item)
-
-    logger.info(
-        "--- Сканирование завершено: проверено новых %d, найдено выгодных %d ---",
-        new_count, deals_count
+    presets = load_presets()
+    sel = presets.get("1", {})
+    target = SearchTarget(
+        name=sel.get("name", "DDR4 RAM"),
+        query=config.search_query or sel.get("query", "ddr4 16gb 3200"),
+        min_price=config.min_price or sel.get("min_price"),
+        max_price=config.max_price or sel.get("max_price"),
+        location=config.search_location or sel.get("location", "all"),
+        required_words=sel.get("required_words"),
+        exclude_words=sel.get("exclude_words")
     )
-    return deals_count
+    queue = VerificationQueue()
+    try:
+        await scan_target_once(scraper, target, cycle_num=1, queue=queue, notifier=notifier)
+    finally:
+        if should_close:
+            await scraper.close()
 
 
-async def run_loop(config, scraper, analyzer, notifier):
-    """Runs continuous monitoring loop."""
-    interval_sec = max(60, config.poll_interval_minutes * 60)
-    logger.info("Запуск демона мониторинга. Интервал проверки: каждые %d минут.", config.poll_interval_minutes)
-    
+async def run_loop(config=None, scraper=None, analyzer=None, notifier=None):
+    """
+    Runs continuous monitoring loop delegating to the universal_sniper pipeline.
+    """
+    config = config or load_config()
+    notifier = notifier or TelegramNotifier(bot_token=config.telegram_bot_token, chat_id=config.telegram_chat_id)
+    should_close = False
+    if scraper is None:
+        scraper = AvitoScraper(config, notifier=notifier)
+        should_close = True
+        await scraper.start()
+    else:
+        scraper.notifier = notifier
+
+    presets = load_presets()
+    sel = presets.get("1", {})
+    target = SearchTarget(
+        name=sel.get("name", "DDR4 RAM"),
+        query=config.search_query or sel.get("query", "ddr4 16gb 3200"),
+        min_price=config.min_price or sel.get("min_price"),
+        max_price=config.max_price or sel.get("max_price"),
+        location=config.search_location or sel.get("location", "all"),
+        required_words=sel.get("required_words"),
+        exclude_words=sel.get("exclude_words")
+    )
+    queue = VerificationQueue()
+    backoff = BackoffManager()
+    poll_sec = max(30, config.poll_interval_minutes * 60)
+    cycle = 0
+
     try:
         while True:
-            try:
-                await run_single_scan(config, scraper, analyzer, notifier)
-            except Exception as e:
-                logger.error("Ошибка во время цикла сканирования: %s", e)
-                
-            logger.info("Ожидание следующего цикла (%d сек)... Нажмите Ctrl+C для остановки.", interval_sec)
-            await asyncio.sleep(interval_sec)
-    except asyncio.CancelledError:
+            cycle += 1
+            await scan_target_once(scraper, target, cycle, queue=queue, notifier=notifier, backoff=backoff)
+            sleep_dur = await async_sleep_jitter(poll_sec, jitter_pct=0.20)
+            logger.info("Следующая проверка через %.1f сек... (Ctrl+C для остановки)", sleep_dur)
+    except (asyncio.CancelledError, KeyboardInterrupt):
         logger.info("Мониторинг остановлен пользователем.")
+    finally:
+        if should_close:
+            await scraper.close()
 
 
 async def run_setup(config):
@@ -111,7 +133,7 @@ def run_test_ai(analyzer):
     print("\n" + "=" * 60)
     print("ТЕСТИРОВАНИЕ АНАЛИЗА ИИ (RAM SNIPER)")
     print("=" * 60)
-    
+
     test_cases = [
         {
             "title": "Kingston Fury Beast DDR4 16GB (2x8) 3200MHz",
@@ -144,7 +166,7 @@ def run_test_ai(analyzer):
             "location": "Казань"
         }
     ]
-    
+
     for case in test_cases:
         res = analyzer.analyze(case["title"], case["price"], case["desc"], case["location"])
         print(f"\n[Кейс] {case['title']} — {case['price']} ₽")
@@ -205,12 +227,12 @@ def run_demo(analyzer, notifier):
 
         if item.get("is_deal"):
             print(">>> 🔥 ИИ ОПРЕДЕЛИЛ СДЕЛКУ КАК ВЫГОДНУЮ! Формируем карточку...")
-            notifier.send_deal_alert(item)
+            notifier.send_deal_alert_sync(item)
             item["notified"] = 1
         else:
             print(f">>> ❌ Пропущено: {item.get('ai_summary')}")
             item["notified"] = 0
-            
+
         save_listing(item)
 
     print("\n" + "=" * 60)
@@ -227,16 +249,16 @@ def main():
     parser.add_argument("--test-notify", action="store_true", help="Отправить тестовое уведомление в Telegram")
     parser.add_argument("--demo", action="store_true", help="Полный демо-прогон пайплайна с выводом карточек в терминал")
     parser.add_argument("--stats", action="store_true", help="Показать статистику базы данных")
-    
+
     args = parser.parse_args()
-    
+
     # Initialize DB
     init_db()
-    
+
     config = load_config()
     analyzer = AIAnalyzer(api_key=config.gemini_api_key)
     notifier = TelegramNotifier(bot_token=config.telegram_bot_token, chat_id=config.telegram_chat_id)
-    scraper = AvitoScraper(config)
+    scraper = AvitoScraper(config, notifier=notifier)
 
     if args.setup:
         asyncio.run(run_setup(config))
@@ -246,7 +268,7 @@ def main():
         run_demo(analyzer, notifier)
     elif args.test_notify:
         print("Отправка тестового уведомления...")
-        ok = notifier.test_connection()
+        ok = notifier.test_connection_sync()
         if ok:
             print("Уведомление успешно доставлено!")
         else:
