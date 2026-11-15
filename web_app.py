@@ -854,6 +854,22 @@ async def get_deals_for_query(query: str, min_price: Optional[int] = None, max_p
     return {"deals": deals, "total": len(deals), "verified_count": verified_count}
 
 
+@app.get("/api/inspect_item/{item_id}")
+async def inspect_item_endpoint(item_id: str):
+    url = None
+    with get_connection() as conn:
+        r = conn.execute("SELECT url FROM verified_deals WHERE item_id = ?", (item_id,)).fetchone()
+        if not r:
+            r = conn.execute("SELECT url FROM listings WHERE item_id = ?", (item_id,)).fetchone()
+        if r and r["url"]:
+            url = r["url"]
+    if not url:
+        raise HTTPException(404, "Item not found in DB")
+    scraper = await get_shared_scraper()
+    details = await scraper.get_item_full_details(url)
+    return {"item_id": item_id, "url": url, "details": details}
+
+
 @app.post("/api/scan/{slot_id}")
 async def trigger_scan(slot_id: str, background_tasks: BackgroundTasks):
     global scan_state

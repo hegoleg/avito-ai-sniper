@@ -185,3 +185,21 @@ def test_specs_sodimm_rejected_when_title_has_no_sodimm():
     ok, reason = target.verify_full_details(f"{title_and_desc}\n{specs}")
     assert not ok
     assert "sodimm" in reason.lower() or "ноутбук" in reason.lower()
+
+
+def test_bsod_blue_screen_rejected():
+    """RAM that throws BSOD / blue screen errors must be rejected."""
+    target = SearchTarget(name="Desktop RAM", query="ddr4 16gb 3200")
+    text = "Использовал пару раз. Лежит так как выдает ошибки(синий экран). Кто разбирается может и починят. 1 шт всего из комплекта."
+    ok, reason = target.verify_full_details(text)
+    assert not ok
+    assert "дефект" in reason.lower() or "запчасти" in reason.lower()
+
+
+def test_untested_no_returns_rejected():
+    """Untested RAM sold 'as is' without returns must be rejected."""
+    target = SearchTarget(name="Desktop RAM", query="ddr4 16gb 3200")
+    text = "продаю свою оперативную память, стояла в прошлом пк, уже год лежит не знаю работает ли она, протестировать не на чем, без возврата"
+    ok, reason = target.verify_full_details(text)
+    assert not ok
+    assert "дефект" in reason.lower() or "запчасти" in reason.lower()
