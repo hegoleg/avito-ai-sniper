@@ -47,10 +47,10 @@ DEFAULT_SLOTS = [
         "slot_name": "Оперативная память (RAM)",
         "icon": "💾",
         "query": "ddr4 16gb 3200",
-        "min_price": 2500,
+        "min_price": 2200,
         "max_price": 8000,
         "retail_est": 5500,
-        "required_words": "ddr4,16gb,3200",
+        "required_words": "ddr4,3200",
         "exclude_words": "sodimm,so-dimm,ноутбук,ноутбучн,ecc,reg,сервер,серверн,солянк"
     },
     {

@@ -111,6 +111,17 @@ GPU_ACCESSORY_PATTERNS = [
 ]
 
 
+def build_word_pattern(word: str) -> str:
+    """Builds regex pattern with word boundaries and flexible unit/digit spacing (e.g. 16gb <-> 16 гб)."""
+    w = word.strip().lower()
+    m = re.match(r'^(\d+)\s*(gb|гб|mb|мб|tb|тб|mhz|мгц|w|вт)$', w)
+    if m:
+        num, unit = m.groups()
+        unit_alts = "gb|гб" if unit in ["gb", "гб"] else "mb|мб" if unit in ["mb", "мб"] else "mhz|мгц" if unit in ["mhz", "мгц"] else unit
+        return r'(?<![a-zA-Z0-9а-яА-ЯёЁ])' + num + r'\s*(?:' + unit_alts + r')(?![a-zA-Z0-9а-яА-ЯёЁ])'
+    return r'(?<![a-zA-Z0-9а-яА-ЯёЁ])' + re.escape(w) + r'(?![a-zA-Z0-9а-яА-ЯёЁ])'
+
+
 def load_presets() -> dict:
     if os.path.exists(PRESETS_PATH):
         try:
@@ -236,12 +247,14 @@ class SearchTarget:
             if re.search(pattern, eval_text):
                 return False, f"Минус-слово: '{ew}'"
 
-        # Check required words (with word boundaries on raw text)
+        # Check required words (with word boundaries on raw text and unit flexibility)
         norm_raw = re.sub(r'(\d+)\s*[хx]\b', r'\1x', raw_full_text.lower())
         if self.required_words:
             for rw in self.required_words:
-                pattern = r"(?<![a-zA-Z0-9а-яА-ЯёЁ])" + re.escape(rw) + r"(?![a-zA-Z0-9а-яА-ЯёЁ])"
+                pattern = build_word_pattern(rw)
                 if not re.search(pattern, norm_raw):
+                    if self.is_ram_search and rw in ["16gb", "16 gb", "16гб"] and re.search(r'\b2\s*[xх*]\s*8\b', norm_raw):
+                        continue
                     return False, f"Отсутствует обязательное слово: '{rw}'"
 
         return True, "OK"
@@ -327,8 +340,10 @@ class SearchTarget:
         norm_combined = re.sub(r'(\d+)\s*[хx]\b', r'\1x', combined_text.lower())
         if self.required_words:
             for rw in self.required_words:
-                pattern = r"(?<![a-zA-Z0-9а-яА-ЯёЁ])" + re.escape(rw) + r"(?![a-zA-Z0-9а-яА-ЯёЁ])"
+                pattern = build_word_pattern(rw)
                 if not re.search(pattern, norm_combined):
+                    if self.is_ram_search and rw in ["16gb", "16 gb", "16гб"] and re.search(r'\b2\s*[xх*]\s*8\b', norm_combined):
+                        continue
                     return False, f"В описании нет обязательного слова: '{rw}'"
 
         return True, "OK"
