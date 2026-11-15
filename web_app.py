@@ -483,14 +483,16 @@ def get_smart_top_deals(query: str, min_price: Optional[int] = None, max_price: 
                 if any(re.search(pat, masked_eval) for pat in GPU_MOBILE_PATTERNS + GPU_ACCESSORY_PATTERNS):
                     continue
 
-            # RAM checks (server / sodimm)
+            # RAM checks (server / sodimm / laptop)
             if is_ram:
                 if any(re.search(pat, full_text) for pat in [
                     r'(?<![а-яА-ЯёЁa-zA-Z])ecc(?![а-яА-ЯёЁa-zA-Z])',
                     r'(?<![а-яА-ЯёЁa-zA-Z])reg(?![а-яА-ЯёЁa-zA-Z])',
                     r'(?<![а-яА-ЯёЁa-zA-Z])сервер',
                     r'(?<![а-яА-ЯёЁa-zA-Z])sodimm',
+                    r'(?<![а-яА-ЯёЁa-zA-Z])so-dimm',
                     r'(?<![а-яА-ЯёЁa-zA-Z])ноутбук',
+                    r'(?<![а-яА-ЯёЁa-zA-Z])ноута',
                     r'(?<![а-яА-ЯёЁa-zA-Z])x99',
                     r'(?<![а-яА-ЯёЁa-zA-Z])xeon'
                 ]):
