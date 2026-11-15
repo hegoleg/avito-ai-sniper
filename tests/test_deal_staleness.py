@@ -163,3 +163,26 @@ def test_format_relative_time():
 
     ts_2_days = (now_utc - timedelta(days=2)).strftime("%Y-%m-%d %H:%M:%S")
     assert "д назад" in format_relative_time(ts_2_days)
+
+
+def test_verify_full_details_reserved_item():
+    target = SearchTarget(
+        name="RAM DDR4",
+        query="ddr4 16gb 3200",
+        max_price=4000
+    )
+    # 1. Page marked reserved via disabled button
+    valid, reason = target.verify_full_details("Отличная память ddr4 16gb 3200", is_page_reserved=True)
+    assert not valid
+    assert "зарезервирован" in reason.lower()
+
+    # 2. Page marked closed
+    valid, reason = target.verify_full_details("Отличная память ddr4 16gb 3200", is_closed=True)
+    assert not valid
+    assert "снято с публикации" in reason.lower() or "закрыто" in reason.lower()
+
+    # 3. Seller wrote 'в резерве' in text
+    valid, reason = target.verify_full_details("Память ddr4 16gb 3200, пока в резерве до вечера")
+    assert not valid
+    assert "резерв" in reason.lower()
+

@@ -402,11 +402,42 @@ class AvitoScraper:
                     is_closed = True
                     is_reserved = True
 
-            # 3. Scope reservation & delivery strictly to the action container
+            # 3. Direct reservation check (e.g. disabled 'Товар зарезервирован' button or status badge)
+            reserved_els = await tab.query_selector_all(
+                'button:has-text("зарезервирован"), '
+                'div:has-text("Товар зарезервирован"), '
+                'span:has-text("Товар зарезервирован"), '
+                'p:has-text("Товар зарезервирован"), '
+                '[data-marker*="delivery-item-status"]:has-text("зарезервирован"), '
+                '[data-marker*="reserved"], '
+                '[class*="reserved"], '
+                '[class*="item-reserved"]'
+            )
+            for r_el in reserved_els:
+                # Exclude recommendation carousels
+                is_in_rec = await r_el.evaluate(
+                    'el => Boolean(el.closest("[data-marker*=\\"recommendation\\"], [class*=\\"recommendation\\"], [class*=\\"carousel\\"], [data-marker*=\\"carousel\\"], [class*=\\"item-view-recommendations\\"]"))'
+                )
+                if not is_in_rec:
+                    r_text = (await r_el.inner_text()).lower()
+                    if "зарезервирован" in r_text or is_reserved_text(r_text):
+                        is_reserved = True
+                        break
+
+            # 4. Scope reservation & delivery to aside container
+            aside_block = await tab.query_selector('aside, [data-marker="item-view/aside"], [class*="item-view-aside"]')
+            if aside_block and not is_reserved:
+                aside_text = (await aside_block.inner_text()).lower()
+                if is_reserved_text(aside_text):
+                    is_reserved = True
+
             action_block = await tab.query_selector(
                 '[data-marker="item-view/actions"], '
                 '[class*="style-item-price-and-actions"], '
-                '[class*="item-view-actions"]'
+                '[class*="style-item-view-aside"], '
+                '[class*="item-view-actions"], '
+                '[data-marker="item-view/aside"], '
+                'aside'
             )
 
             # Fallback: check if buy/contact buttons are replaced with "Оценить продавца" (closed indicator)
