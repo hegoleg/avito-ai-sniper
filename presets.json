@@ -1,0 +1,83 @@
+{
+  "1": {
+    "name": "ОЗУ DDR4 16GB (2x8) ~3200MHz",
+    "query": "ddr4 16gb 3200",
+    "min_price": 2500,
+    "max_price": 9000,
+    "location": "all",
+    "required_words": ["ddr4", "3200"],
+    "exclude_words": ["sodimm", "ноутбук", "ecc", "reg", "сервер", "x99", "xeon", "atermiter", "kllisre", "machinist", "не рабоч", "запчаст", "дефект", "солянк", "разные"]
+  },
+  "2": {
+    "name": "Видеокарта RTX 3070 (десктоп, не мобайл)",
+    "query": "rtx 3070",
+    "min_price": 25000,
+    "max_price": 36000,
+    "location": "all",
+    "required_words": ["3070"],
+    "exclude_words": ["3070 ti", "3070ti", "3070m", "3070 m", "mobile", "мобайл", "ноутбук", "laptop", "франкенштейн", "коробка", "артефакт", "не вывод", "не работ", "запчаст", "кулер", "охлажден", "радиатор"]
+  },
+  "3": {
+    "name": "Видеокарта RTX 4060 (десктоп, не мобайл)",
+    "query": "rtx 4060",
+    "min_price": 25000,
+    "max_price": 36000,
+    "location": "all",
+    "required_words": ["4060"],
+    "exclude_words": ["4060 ti", "4060ti", "4060m", "4060 m", "mobile", "мобайл", "ноутбук", "laptop", "франкенштейн", "коробка", "не работ", "запчаст", "кулер"]
+  },
+  "4": {
+    "name": "Процессор Ryzen 5 5600",
+    "query": "ryzen 5 5600",
+    "min_price": 6000,
+    "max_price": 11000,
+    "location": "all",
+    "required_words": ["5600"],
+    "exclude_words": ["5600g", "5600x", "ноутбук", "ножк", "не работ", "коробка", "кулер", "мутант"]
+  },
+  "5": {
+    "name": "PlayStation 5",
+    "query": "playstation 5",
+    "min_price": 32000,
+    "max_price": 52000,
+    "location": "all",
+    "required_words": ["playstation 5", "ps5"],
+    "exclude_words": ["ps4", "чехол", "подставк", "коробка", "геймпад", "джойстик", "аренда", "бан", "забанен", "запчаст", "реплика", "диск"]
+  },
+  "6": {
+    "name": "iPhone 13",
+    "query": "iphone 13",
+    "min_price": 28000,
+    "max_price": 45000,
+    "location": "all",
+    "required_words": ["iphone 13"],
+    "exclude_words": ["pro", "mini", "коробка", "чехол", "экран", "запчаст", "копия", "реплика", "icloud", "байпас", "демо"]
+  },
+  "7": {
+    "name": "Процессор Ryzen 5 5600X",
+    "query": "ryzen 5 5600x",
+    "min_price": 6000,
+    "max_price": 13000,
+    "location": "all",
+    "required_words": ["5600x"],
+    "exclude_words": ["5600g", "ноутбук", "не работ", "неисправн", "дефект", "запчаст", "только кулер", "мутант", "погнут"]
+  },
+  "8": {
+    "name": "Материнская плата Gigabyte B550M Aorus Elite",
+    "query": "gigabyte b550m aorus elite",
+    "min_price": 6500,
+    "max_price": 16000,
+    "location": "all",
+    "required_words": ["b550m", "aorus", "elite"],
+    "exclude_words": ["ds3h", "gaming x", "не рабоч", "неисправн", "дефект", "запчаст", "погнут", "сокет сломан"]
+  },
+  "9": {
+    "name": "Процессор Ryzen 7 5700X",
+    "query": "ryzen 7 5700x",
+    "min_price": 8000,
+    "max_price": 17000,
+    "location": "all",
+    "required_words": ["5700x"],
+    "exclude_words": ["5700g", "ноутбук", "не работ", "неисправн", "дефект", "запчаст", "только кулер", "мутант", "погнут"]
+  }
+}

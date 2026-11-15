@@ -1,0 +1,950 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Avito PC Builder & Deal Sniper</title>
+    <!-- 100% автономный интерфейс: 0 внешних CDN и шрифтов (работает мгновенно без блокировок) -->
+    <style>
+        :root {
+            --bg-body: #0b0f19;
+            --bg-card: #131b2e;
+            --bg-card-hover: #17223b;
+            --bg-input: #090d16;
+            --border-color: #202b42;
+            --border-active: #10b981;
+            --text-main: #f1f5f9;
+            --text-muted: #94a3b8;
+            --primary: #10b981;
+            --primary-hover: #059669;
+            --primary-glow: rgba(16, 185, 129, 0.25);
+            --danger: #f43f5e;
+            --accent-blue: #38bdf8;
+            --radius-md: 12px;
+            --radius-lg: 16px;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        }
+
+        body {
+            background-color: var(--bg-body);
+            color: var(--text-main);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            line-height: 1.5;
+        }
+
+        .container {
+            max-width: 1280px;
+            margin: 0 auto;
+            padding: 0 16px;
+            width: 100%;
+        }
+
+        /* Header */
+        header {
+            background: rgba(19, 27, 46, 0.95);
+            border-bottom: 1px solid var(--border-color);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            backdrop-filter: blur(8px);
+            padding: 14px 0;
+        }
+
+        .header-top {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .brand-icon {
+            width: 42px;
+            height: 42px;
+            border-radius: 12px;
+            background: linear-gradient(135deg, #10b981, #0284c7);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 22px;
+            box-shadow: 0 4px 12px var(--primary-glow);
+        }
+
+        .brand-title {
+            font-size: 18px;
+            font-weight: 700;
+            color: #fff;
+            letter-spacing: -0.3px;
+        }
+
+        .brand-sub {
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+
+        .header-actions {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 8px;
+        }
+
+        select, input, button {
+            font-size: 13px;
+            color: var(--text-main);
+            background: var(--bg-input);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 8px 12px;
+            outline: none;
+            transition: all 0.2s ease;
+        }
+
+        select:focus, input:focus {
+            border-color: var(--primary);
+            box-shadow: 0 0 0 2px var(--primary-glow);
+        }
+
+        button {
+            cursor: pointer;
+            font-weight: 600;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #10b981, #059669);
+            color: #fff;
+            border: none;
+        }
+        .btn-primary:hover {
+            background: linear-gradient(135deg, #059669, #047857);
+            box-shadow: 0 4px 14px var(--primary-glow);
+        }
+
+        .btn-secondary {
+            background: #1c273e;
+            border: 1px solid var(--border-color);
+        }
+        .btn-secondary:hover {
+            background: #23314d;
+            border-color: #334466;
+        }
+
+        .btn-danger {
+            color: #fda4af;
+            background: rgba(244, 63, 94, 0.1);
+            border: 1px solid rgba(244, 63, 94, 0.25);
+        }
+        .btn-danger:hover {
+            background: rgba(244, 63, 94, 0.2);
+            color: #fff;
+        }
+
+        /* Summary Stats Bar */
+        .stats-bar {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 12px;
+            margin-top: 14px;
+            padding-top: 14px;
+            border-top: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .stat-card {
+            background: rgba(11, 15, 25, 0.7);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-md);
+            padding: 10px 14px;
+        }
+
+        .stat-card.highlight {
+            border-color: rgba(16, 185, 129, 0.4);
+            box-shadow: 0 0 15px var(--primary-glow);
+        }
+
+        .stat-label {
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-muted);
+        }
+
+        .stat-val {
+            font-size: 20px;
+            font-weight: 800;
+            color: #fff;
+            margin-top: 2px;
+        }
+
+        .stat-val.green {
+            color: #34d399;
+        }
+
+        .progress-track {
+            height: 6px;
+            background: #1c273e;
+            border-radius: 99px;
+            margin-top: 6px;
+            overflow: hidden;
+        }
+
+        .progress-bar {
+            height: 100%;
+            background: linear-gradient(90deg, #10b981, #38bdf8);
+            border-radius: 99px;
+            width: 0%;
+            transition: width 0.4s ease;
+        }
+
+        /* Scan Banner */
+        .scan-banner {
+            display: none;
+            background: linear-gradient(135deg, #1e1b4b, #0f172a);
+            border: 1px solid #4338ca;
+            border-radius: var(--radius-md);
+            padding: 14px 18px;
+            margin: 16px 0;
+            box-shadow: 0 4px 20px rgba(67, 56, 202, 0.2);
+        }
+
+        .scan-banner.active {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 14px;
+        }
+
+        .spinner {
+            width: 24px;
+            height: 24px;
+            border: 3px solid rgba(129, 140, 248, 0.2);
+            border-top-color: #818cf8;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Main Slots Grid */
+        main {
+            padding: 24px 0 40px;
+            flex: 1;
+        }
+
+        .grid-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+        }
+
+        .grid-header h2 {
+            font-size: 18px;
+            font-weight: 700;
+        }
+
+        .badge-secure {
+            font-size: 11px;
+            color: #34d399;
+            background: rgba(16, 185, 129, 0.1);
+            padding: 4px 10px;
+            border-radius: 99px;
+            border: 1px solid rgba(16, 185, 129, 0.2);
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .badge-secure::before {
+            content: "";
+            width: 6px;
+            height: 6px;
+            background: #34d399;
+            border-radius: 50%;
+            display: inline-block;
+        }
+
+        .slots-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+            gap: 16px;
+        }
+
+        .slot-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-lg);
+            padding: 16px;
+            transition: all 0.2s ease;
+        }
+
+        .slot-card.selected {
+            border-color: rgba(16, 185, 129, 0.5);
+            background: linear-gradient(180deg, rgba(19, 27, 46, 0.95), rgba(16, 185, 129, 0.05));
+        }
+
+        .slot-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 12px;
+        }
+
+        .slot-info {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .slot-icon {
+            font-size: 24px;
+        }
+
+        .slot-title {
+            font-size: 15px;
+            font-weight: 700;
+        }
+
+        .slot-retail {
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+
+        .slot-status-badge {
+            font-size: 11px;
+            font-weight: 600;
+            padding: 3px 8px;
+            border-radius: 6px;
+            background: #1c273e;
+            color: var(--text-muted);
+        }
+
+        .slot-card.selected .slot-status-badge {
+            background: rgba(16, 185, 129, 0.15);
+            color: #34d399;
+            border: 1px solid rgba(16, 185, 129, 0.3);
+        }
+
+        /* Selected Item Alert */
+        .selected-item-box {
+            background: rgba(6, 78, 59, 0.3);
+            border: 1px solid rgba(16, 185, 129, 0.35);
+            border-radius: var(--radius-md);
+            padding: 10px 12px;
+            margin-bottom: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+        }
+
+        .selected-item-title {
+            font-size: 13px;
+            font-weight: 600;
+            color: #fff;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 200px;
+        }
+
+        .selected-item-price {
+            font-size: 15px;
+            font-weight: 800;
+            color: #34d399;
+        }
+
+        /* Controls inside Card */
+        .slot-controls {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+
+        .input-row {
+            display: grid;
+            grid-template-columns: 2fr 1fr 1fr;
+            gap: 6px;
+        }
+
+        .slot-actions {
+            display: flex;
+            gap: 8px;
+            padding-top: 10px;
+            border-top: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .slot-actions button {
+            flex: 1;
+        }
+
+        /* Deals List (Accordion) */
+        .deals-container {
+            margin-top: 12px;
+            padding-top: 12px;
+            border-top: 1px solid rgba(255, 255, 255, 0.05);
+            display: none;
+        }
+
+        .deals-container.open {
+            display: block;
+        }
+
+        .deals-header {
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            margin-bottom: 8px;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .deals-list {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            max-height: 380px;
+            overflow-y: auto;
+            padding-right: 4px;
+        }
+
+        .deal-badge-verified {
+            font-size: 10px;
+            font-weight: 700;
+            color: #34d399;
+            background: rgba(16, 185, 129, 0.15);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+            border-radius: 4px;
+            padding: 1px 5px;
+            display: inline-block;
+        }
+
+        .deal-rank {
+            font-size: 13px;
+            font-weight: 800;
+            min-width: 26px;
+            text-align: center;
+        }
+
+        .deal-item {
+            background: var(--bg-input);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 8px 10px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            font-size: 12px;
+            transition: border-color 0.15s;
+        }
+
+        .deal-item:hover {
+            border-color: #334466;
+        }
+
+        .deal-item-info {
+            overflow: hidden;
+        }
+
+        .deal-title {
+            font-weight: 600;
+            color: #fff;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 180px;
+        }
+
+        .deal-price {
+            font-weight: 800;
+            color: #34d399;
+            font-size: 13px;
+        }
+
+        .deal-loc {
+            color: var(--text-muted);
+            font-size: 11px;
+        }
+
+        footer {
+            background: #090d16;
+            border-top: 1px solid var(--border-color);
+            padding: 14px;
+            text-align: center;
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Header -->
+    <header>
+        <div class="container">
+            <div class="header-top">
+                <div class="brand">
+                    <div class="brand-icon">🎯</div>
+                    <div>
+                        <div class="brand-title">Avito PC Builder & Deal Sniper</div>
+                        <div class="brand-sub">Конфигуратор ПК и перехват супер-цен на Авито</div>
+                    </div>
+                </div>
+
+                <div class="header-actions">
+                    <select id="templateSelector" onchange="loadTemplate(this.value)">
+                        <option value="">⚡ Выберите готовый шаблон сборки...</option>
+                    </select>
+                    <button onclick="resetBuild()" class="btn-secondary" style="font-size: 12px;">Сброс</button>
+                    <button id="soundToggleBtn" onclick="toggleSound()" class="btn-secondary" style="font-size: 12px;">
+                        <span>🔔</span> Звук вкл
+                    </button>
+                </div>
+            </div>
+
+            <!-- Stats Bar -->
+            <div class="stats-bar">
+                <div class="stat-card">
+                    <div class="stat-label">Итого сборка (Авито)</div>
+                    <div id="statTotalBuild" class="stat-val green">0 ₽</div>
+                </div>
+
+                <div class="stat-card">
+                    <div class="stat-label">Ориентир нового (Магазины)</div>
+                    <div id="statTotalRetail" class="stat-val">~0 ₽</div>
+                </div>
+
+                <div class="stat-card highlight">
+                    <div class="stat-label" style="color: #34d399;">Ваша экономия</div>
+                    <div id="statSavings" class="stat-val green">0 ₽ (0%)</div>
+                </div>
+
+                <div class="stat-card">
+                    <div style="display: flex; justify-content: space-between;" class="stat-label">
+                        <span>Собрано деталей</span>
+                        <span id="statFilledText" style="color:#fff;">0 / 8</span>
+                    </div>
+                    <div class="progress-track">
+                        <div id="statProgressBar" class="progress-bar"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Scan Banner Notification -->
+    <div class="container">
+        <div id="scannerBanner" class="scan-banner">
+            <div style="display: flex; align-items: center; gap: 12px;">
+                <div class="spinner"></div>
+                <div>
+                    <div id="scanTitle" style="font-size: 14px; font-weight: 700; color: #c7d2fe;">Сканирование Авито...</div>
+                    <div id="scanMessage" style="font-size: 12px; color: #94a3b8;">Поиск карточек и фильтрация ловушек цен...</div>
+                </div>
+            </div>
+            <div id="scanProgressText" style="font-weight: 800; color: #818cf8; font-size: 14px;">0%</div>
+        </div>
+    </div>
+
+    <!-- Main Content -->
+    <main>
+        <div class="container">
+            <div class="grid-header">
+                <h2>🧩 Комплектующие сборки</h2>
+                <div class="badge-secure">Защита от брони и фейковых цен активна</div>
+            </div>
+
+            <div id="slotsGrid" class="slots-grid">
+                <!-- Slots populated by JS -->
+            </div>
+        </div>
+    </main>
+
+    <!-- Footer -->
+    <footer>
+        Avito PC Builder & Sniper © 2026 | Полностью автономный интерфейс | Защита от брони, солянок и фейковых цен
+    </footer>
+
+    <!-- Audio Web API Synth -->
+    <script>
+        let soundEnabled = true;
+        function playChime() {
+            if (!soundEnabled) return;
+            try {
+                const ctx = new (window.AudioContext || window.webkitAudioContext)();
+                const now = ctx.currentTime;
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(587.33, now);
+                osc.frequency.exponentialRampToValueAtTime(880, now + 0.15);
+                gain.gain.setValueAtTime(0.2, now);
+                gain.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                osc.start(now);
+                osc.stop(now + 0.5);
+            } catch (e) {
+                console.log(e);
+            }
+        }
+
+        function toggleSound() {
+            soundEnabled = !soundEnabled;
+            const btn = document.getElementById('soundToggleBtn');
+            btn.innerHTML = soundEnabled ? '<span>🔔</span> Звук вкл' : '<span>🔕</span> Звук выкл';
+            if (soundEnabled) playChime();
+        }
+    </script>
+
+    <!-- App Logic -->
+    <script>
+        let currentBuild = [];
+        let expandedDeals = {};
+        let pollInterval = null;
+
+        async function initApp() {
+            await loadTemplatesList();
+            await fetchBuildState();
+            startStatusPolling();
+        }
+
+        async function loadTemplatesList() {
+            try {
+                const res = await fetch('/api/templates');
+                const templates = await res.json();
+                const sel = document.getElementById('templateSelector');
+                sel.innerHTML = '<option value="">⚡ Выберите готовый шаблон сборки...</option>';
+                templates.forEach(t => {
+                    const opt = document.createElement('option');
+                    opt.value = t.id;
+                    opt.innerText = t.title;
+                    sel.appendChild(opt);
+                });
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        async function loadTemplate(templateId) {
+            if (!templateId) return;
+            if (!confirm("Загрузить этот шаблон сборки? Настройки комплектующих будут обновлены.")) {
+                document.getElementById('templateSelector').value = "";
+                return;
+            }
+            try {
+                await fetch(`/api/build/template/${templateId}`, { method: 'POST' });
+                await fetchBuildState();
+                playChime();
+            } catch (e) {
+                alert("Ошибка: " + e);
+            }
+        }
+
+        async function fetchBuildState() {
+            try {
+                const res = await fetch('/api/build');
+                const data = await res.json();
+                currentBuild = data.slots;
+
+                document.getElementById('statTotalBuild').innerText = data.total_build.toLocaleString('ru-RU') + ' ₽';
+                document.getElementById('statTotalRetail').innerText = '~' + data.total_retail.toLocaleString('ru-RU') + ' ₽';
+                document.getElementById('statSavings').innerText = 
+                    data.savings_rub.toLocaleString('ru-RU') + ` ₽ (-${data.savings_pct}%)`;
+                
+                document.getElementById('statFilledText').innerText = `${data.filled_count} / ${data.total_slots}`;
+                const pct = Math.round((data.filled_count / data.total_slots) * 100);
+                document.getElementById('statProgressBar').style.width = pct + '%';
+
+                renderSlots(data.slots);
+            } catch (e) {
+                console.error("fetchBuildState error:", e);
+            }
+        }
+
+        function renderSlots(slots) {
+            const container = document.getElementById('slotsGrid');
+            container.innerHTML = "";
+
+            slots.forEach(s => {
+                const isSelected = !!s.selected_price;
+                const card = document.createElement('div');
+                card.className = `slot-card ${isSelected ? 'selected' : ''}`;
+
+                let selectedBanner = "";
+                if (isSelected) {
+                    selectedBanner = `
+                        <div class="selected-item-box">
+                            <div style="overflow: hidden;">
+                                <div style="font-size: 11px; color: #34d399; font-weight: 700;">ВЫБРАНО В СБОРКУ</div>
+                                <div class="selected-item-title" title="${s.selected_title}">${s.selected_title}</div>
+                                <div style="font-size: 11px; color: #94a3b8;">${s.selected_location || 'РФ'}</div>
+                            </div>
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <div class="selected-item-price">${s.selected_price.toLocaleString('ru-RU')} ₽</div>
+                                <a href="${s.selected_url}" target="_blank" style="padding: 4px 8px; font-size: 12px; background: #1e293b; border-radius: 6px; text-decoration: none; color: #fff;" title="Открыть на Авито">🔗</a>
+                                <button onclick="clearSlot('${s.slot_id}')" class="btn-danger" style="padding: 4px 8px; font-size: 11px;" title="Убрать из сборки">✕</button>
+                            </div>
+                        </div>
+                    `;
+                }
+
+                card.innerHTML = `
+                    <div class="slot-header">
+                        <div class="slot-info">
+                            <span class="slot-icon">${s.icon || '🔧'}</span>
+                            <div>
+                                <div class="slot-title">${s.slot_name}</div>
+                                <div class="slot-retail">Ориентир нового: ~${(s.retail_est || 0).toLocaleString('ru-RU')} ₽</div>
+                            </div>
+                        </div>
+                        <span class="slot-status-badge">${isSelected ? 'Выбрано' : 'Не выбрано'}</span>
+                    </div>
+
+                    ${selectedBanner}
+
+                    <div class="slot-controls">
+                        <div>
+                            <label style="font-size: 11px; color: #94a3b8; font-weight: 600; display: block; margin-bottom: 3px;">Поисковый запрос</label>
+                            <input type="text" id="query_${s.slot_id}" value="${s.target_query}" style="width: 100%;">
+                        </div>
+                        <div class="input-row">
+                            <div style="grid-column: span 1;">
+                                <label style="font-size: 11px; color: #94a3b8; font-weight: 600; display: block; margin-bottom: 3px;">Мин ₽</label>
+                                <input type="number" id="min_${s.slot_id}" value="${s.min_price || ''}" placeholder="0" style="width: 100%;">
+                            </div>
+                            <div style="grid-column: span 2;">
+                                <label style="font-size: 11px; color: #94a3b8; font-weight: 600; display: block; margin-bottom: 3px;">Макс ₽</label>
+                                <input type="number" id="max_${s.slot_id}" value="${s.max_price || ''}" placeholder="∞" style="width: 100%;">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="slot-actions">
+                        <button onclick="saveAndScanSlot('${s.slot_id}')" class="btn-primary">
+                            <span>🚀</span> Искать на Авито
+                        </button>
+                        <button onclick="toggleDealsView('${s.slot_id}', '${encodeURIComponent(s.target_query)}')" class="btn-secondary">
+                            <span>📋</span> Сделки в базе
+                        </button>
+                    </div>
+
+                    <div id="dealsContainer_${s.slot_id}" class="deals-container ${expandedDeals[s.slot_id] ? 'open' : ''}">
+                        <div class="deals-header">
+                            <span>Подтверждённые предложения:</span>
+                            <span style="color: #34d399;">Без брони</span>
+                        </div>
+                        <div id="dealsList_${s.slot_id}" class="deals-list">
+                            <div style="font-size: 11px; color: #64748b; text-align: center; padding: 10px;">Загрузка сделок...</div>
+                        </div>
+                    </div>
+                `;
+
+                container.appendChild(card);
+            });
+        }
+
+        async function toggleDealsView(slotId, encodedQuery) {
+            const container = document.getElementById(`dealsContainer_${slotId}`);
+            if (!container) return;
+
+            const isOpen = container.classList.contains('open');
+            if (isOpen) {
+                container.classList.remove('open');
+                expandedDeals[slotId] = false;
+            } else {
+                container.classList.add('open');
+                expandedDeals[slotId] = true;
+                await loadDealsForSlot(slotId, decodeURIComponent(encodedQuery));
+            }
+        }
+
+        async function loadDealsForSlot(slotId, query) {
+            const listEl = document.getElementById(`dealsList_${slotId}`);
+            if (!listEl) return;
+
+            const minP = document.getElementById(`min_${slotId}`)?.value;
+            const maxP = document.getElementById(`max_${slotId}`)?.value;
+            let url = `/api/deals/${encodeURIComponent(query)}`;
+            const params = [];
+            if (minP) params.push(`min_price=${minP}`);
+            if (maxP) params.push(`max_price=${maxP}`);
+            if (params.length > 0) url += `?${params.join('&')}`;
+
+            try {
+                const res = await fetch(url);
+                const data = await res.json();
+                const deals = data.deals || data.verified || [];
+
+                if (!deals || deals.length === 0) {
+                    listEl.innerHTML = `
+                        <div style="text-align: center; padding: 14px; font-size: 11px; color: #64748b; background: rgba(0,0,0,0.2); border-radius: 8px;">
+                            Пока нет подходящих предложений в базе.<br>
+                            <span style="color: #34d399; font-weight: 600;">Нажмите «Искать на Авито», чтобы найти свежий ТОП цен!</span>
+                        </div>
+                    `;
+                    return;
+                }
+
+                listEl.innerHTML = "";
+                deals.forEach((d, idx) => {
+                    const item = document.createElement('div');
+                    item.className = "deal-item";
+                    const medal = idx === 0 ? "🥇" : idx === 1 ? "🥈" : idx === 2 ? "🥉" : `#${idx + 1}`;
+                    const badge = d.is_verified 
+                        ? `<span class="deal-badge-verified">✅ Проверено</span>`
+                        : `<span style="font-size: 10px; color: #94a3b8; background: #1c273e; padding: 1px 4px; border-radius: 4px;">С Авито</span>`;
+
+                    item.innerHTML = `
+                        <div style="display: flex; align-items: center; gap: 8px; overflow: hidden;">
+                            <span class="deal-rank">${medal}</span>
+                            <div class="deal-item-info">
+                                <div class="deal-title" title="${d.title}">${d.title}</div>
+                                <div style="display: flex; gap: 6px; align-items: center; margin-top: 2px;">
+                                    <span class="deal-price">${d.price.toLocaleString('ru-RU')} ₽</span>
+                                    ${badge}
+                                    <span class="deal-loc">• ${d.location || 'РФ'}</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div style="display: flex; gap: 4px; align-items: center; shrink-0;">
+                            <a href="${d.url}" target="_blank" style="padding: 5px 8px; background: #1c273e; border-radius: 6px; text-decoration: none; color: #fff; font-size: 11px;" title="Открыть объявление">🔗</a>
+                            <button onclick="selectDeal('${slotId}', '${d.item_id}', '${d.title.replace(/'/g, "\\'")}', ${d.price}, '${d.url}', '${d.location || ''}')" class="btn-primary" style="padding: 5px 10px; font-size: 11px; white-space: nowrap;">
+                                ➕ В сборку
+                            </button>
+                        </div>
+                    `;
+                    listEl.appendChild(item);
+                });
+            } catch (e) {
+                listEl.innerHTML = `<div style="color: #f43f5e; font-size: 11px; padding: 8px;">Ошибка: ${e}</div>`;
+            }
+        }
+
+        async function saveAndScanSlot(slotId) {
+            const query = document.getElementById(`query_${slotId}`).value;
+            const minP = document.getElementById(`min_${slotId}`).value;
+            const maxP = document.getElementById(`max_${slotId}`).value;
+
+            await fetch('/api/build/update_slot', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    slot_id: slotId,
+                    query: query,
+                    min_price: minP ? parseInt(minP) : null,
+                    max_price: maxP ? parseInt(maxP) : null
+                })
+            });
+
+            try {
+                const res = await fetch(`/api/scan/${slotId}`, { method: 'POST' });
+                if (res.status === 409) {
+                    alert("Сканер уже занят другой задачей, подождите завершения.");
+                    return;
+                }
+                const container = document.getElementById(`dealsContainer_${slotId}`);
+                if (container) {
+                    container.classList.add('open');
+                    expandedDeals[slotId] = true;
+                }
+            } catch (e) {
+                alert("Ошибка запуска сканера: " + e);
+            }
+        }
+
+        async function selectDeal(slotId, itemId, title, price, url, location) {
+            try {
+                await fetch('/api/build/select', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        slot_id: slotId,
+                        item_id: itemId,
+                        title: title,
+                        price: price,
+                        url: url,
+                        location: location
+                    })
+                });
+                playChime();
+                await fetchBuildState();
+            } catch (e) {
+                alert("Ошибка: " + e);
+            }
+        }
+
+        async function clearSlot(slotId) {
+            try {
+                await fetch(`/api/build/clear/${slotId}`, { method: 'POST' });
+                await fetchBuildState();
+            } catch (e) {
+                alert("Ошибка: " + e);
+            }
+        }
+
+        async function resetBuild() {
+            if (!confirm("Сбросить все выбранные детали сборки?")) return;
+            try {
+                await fetch('/api/build/reset', { method: 'POST' });
+                await fetchBuildState();
+            } catch (e) {
+                alert("Ошибка: " + e);
+            }
+        }
+
+        function startStatusPolling() {
+            if (pollInterval) clearInterval(pollInterval);
+            pollInterval = setInterval(async () => {
+                try {
+                    const res = await fetch('/api/scan/status');
+                    const status = await res.json();
+                    const banner = document.getElementById('scannerBanner');
+
+                    if (status.is_running) {
+                        banner.classList.add('active');
+                        document.getElementById('scanTitle').innerText = `Сканирование: '${status.query}'`;
+                        document.getElementById('scanMessage').innerText = status.message;
+                        document.getElementById('scanProgressText').innerText = status.progress + '%';
+                    } else {
+                        if (banner.classList.contains('active')) {
+                            banner.classList.remove('active');
+                            if (status.new_deals_count > 0) {
+                                playChime();
+                            }
+                            await fetchBuildState();
+                            if (status.slot_id) {
+                                await loadDealsForSlot(status.slot_id, status.query);
+                            }
+                        }
+                    }
+                } catch (e) {}
+            }, 1500);
+        }
+
+        document.addEventListener('DOMContentLoaded', initApp);
+    </script>
+</body>
+</html>

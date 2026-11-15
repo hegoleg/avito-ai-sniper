@@ -1,0 +1,468 @@
+"""
+FastAPI Web Application: Avito PC Builder & Deal Sniper.
+Allows users to configure PC components, set target price ranges,
+trigger real-time Avito scraping with anti-bait filters, and track total build savings.
+"""
+
+import asyncio
+import logging
+import os
+import re
+import sys
+from contextlib import asynccontextmanager
+from typing import Dict, Any, Optional, List
+from fastapi import FastAPI, BackgroundTasks, HTTPException
+from fastapi.responses import HTMLResponse, JSONResponse
+from pydantic import BaseModel
+
+if sys.platform == "win32":
+    sys.stdout.reconfigure(encoding="utf-8")
+
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
+from config import load_config
+from database import (
+    init_db,
+    save_listing,
+    save_verified_deal,
+    mark_deal_reserved_or_inactive,
+    get_all_time_top_deals,
+    get_connection
+)
+from scraper import AvitoScraper
+from anti_bait import check_listing_bait, check_description_bait
+from universal_sniper import SearchTarget, DEFAULT_EXCLUDES, GPU_MOBILE_PATTERNS, GPU_ACCESSORY_PATTERNS
+from build_db import (
+    init_builder_tables,
+    get_current_build,
+    select_deal_for_slot,
+    clear_slot_selection,
+    reset_all_selections,
+    update_slot_config,
+    apply_build_template,
+    BUILD_TEMPLATES
+)
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logger = logging.getLogger("WebBuilder")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    init_db()
+    init_builder_tables()
+    logger.info("Avito PC Builder Web App started.")
+    yield
+    global scraper_instance
+    if scraper_instance:
+        await scraper_instance.close()
+        scraper_instance = None
+    logger.info("Avito PC Builder Web App stopped.")
+
+app = FastAPI(title="Avito PC Builder & Sniper", lifespan=lifespan)
+
+# Global scraper and scan status
+scanner_lock = asyncio.Lock()
+scan_state = {
+    "is_running": False,
+    "slot_id": None,
+    "query": "",
+    "message": "Готов к работе",
+    "progress": 0,
+    "new_deals_count": 0,
+    "last_error": None
+}
+
+scraper_instance: Optional[AvitoScraper] = None
+
+
+async def get_shared_scraper() -> AvitoScraper:
+    global scraper_instance
+    if scraper_instance is None:
+        cfg = load_config()
+        # Web app runs Playwright with persistent session
+        scraper_instance = AvitoScraper(cfg)
+        await scraper_instance.start()
+    return scraper_instance
+
+
+# Models
+class SelectDealRequest(BaseModel):
+    slot_id: str
+    item_id: str
+    title: str
+    price: int
+    url: str
+    location: Optional[str] = ""
+
+
+class UpdateSlotRequest(BaseModel):
+    slot_id: str
+    query: str
+    min_price: Optional[int] = None
+    max_price: Optional[int] = None
+    required_words: Optional[str] = ""
+    exclude_words: Optional[str] = ""
+
+
+# Scraper Background Task
+async def run_slot_scan(slot_id: str, query: str, min_price: Optional[int], max_price: Optional[int], required: str, exclude: str):
+    global scan_state
+    async with scanner_lock:
+        scan_state["is_running"] = True
+        scan_state["slot_id"] = slot_id
+        scan_state["query"] = query
+        scan_state["message"] = f"Запуск браузера для поиска '{query}'..."
+        scan_state["progress"] = 10
+        scan_state["new_deals_count"] = 0
+        scan_state["last_error"] = None
+
+        try:
+            scraper = await get_shared_scraper()
+            target = SearchTarget(
+                name=query,
+                query=query,
+                min_price=min_price,
+                max_price=max_price,
+                location="all",
+                required_words=[w.strip() for w in required.split(",") if w.strip()],
+                exclude_words=[w.strip() for w in exclude.split(",") if w.strip()]
+            )
+
+            # Phase 1: Cheapest
+            scan_state["message"] = f"Опрос Авито: самые дешёвые предложения (s=1)..."
+            scan_state["progress"] = 25
+            items_cheap = await scraper.scrape_new_listings(
+                max_items=35,
+                query=target.query,
+                sort_by="1",
+                min_price=target.min_price,
+                max_price=target.max_price,
+                location="all",
+                category=""
+            )
+
+            # Phase 2: Newest
+            scan_state["message"] = f"Опрос Авито: самые свежие объявления (s=104)..."
+            scan_state["progress"] = 50
+            items_fresh = await scraper.scrape_new_listings(
+                max_items=35,
+                query=target.query,
+                sort_by="104",
+                min_price=target.min_price,
+                max_price=target.max_price,
+                location="all",
+                category=""
+            )
+
+            collected = {}
+            for it in items_cheap + items_fresh:
+                iid = it.get("item_id")
+                if iid and iid not in collected:
+                    collected[iid] = it
+
+            scan_state["message"] = f"Собрано {len(collected)} объявлений. Фильтрация и проверка..."
+            scan_state["progress"] = 70
+
+            candidates = []
+            for it in collected.values():
+                ok, reason = target.quick_filter(it)
+                if ok and it.get("price", 0) > 0:
+                    candidates.append(it)
+                try:
+                    save_listing(it)
+                except Exception:
+                    pass
+
+            candidates.sort(key=lambda x: x["price"])
+            scan_state["message"] = f"Прошло первичный фильтр: {len(candidates)}. Глубокая проверка на бронь и ложные цены..."
+            scan_state["progress"] = 80
+
+            verified_count = 0
+            for it in candidates[:12]:
+                url = it.get("url")
+                title = it.get("title")
+                price = it.get("price")
+                item_id = it.get("item_id")
+
+                details = await scraper.get_item_full_details(url)
+                combined_text = details.get("combined_text", "")
+                is_page_reserved = details.get("is_page_reserved", False)
+
+                valid, reject_reason = target.verify_full_details(combined_text, is_page_reserved=is_page_reserved)
+                if not valid:
+                    if item_id:
+                        mark_deal_reserved_or_inactive(item_id)
+                    continue
+
+                deal_entry = {
+                    "item_id": str(item_id),
+                    "title": title,
+                    "price": price,
+                    "url": url,
+                    "location": it.get("location", ""),
+                    "specs": target.query
+                }
+                save_verified_deal(deal_entry, query=target.query)
+                verified_count += 1
+
+            scan_state["new_deals_count"] = verified_count
+            scan_state["message"] = f"Готово! Подтверждено {verified_count} чистых сделок по '{query}'"
+            scan_state["progress"] = 100
+
+        except Exception as e:
+            logger.error("Scan error: %s", e, exc_info=True)
+            scan_state["last_error"] = str(e)
+            scan_state["message"] = f"Ошибка: {e}"
+        finally:
+            scan_state["is_running"] = False
+
+
+# Routes
+@app.get("/", response_class=HTMLResponse)
+async def serve_dashboard():
+    index_path = os.path.join(PROJECT_ROOT, "templates", "index.html")
+    if os.path.exists(index_path):
+        with open(index_path, "r", encoding="utf-8") as f:
+            return f.read()
+    return "<h1>Шаблон интерфейса не найден в templates/index.html</h1>"
+
+
+@app.get("/api/build")
+async def get_build_state():
+    slots = get_current_build()
+    total_build = 0
+    total_retail = 0
+    filled_slots = 0
+
+    for s in slots:
+        if s.get("selected_price"):
+            total_build += s["selected_price"]
+            filled_slots += 1
+        if s.get("retail_est"):
+            total_retail += s["retail_est"]
+
+    savings_rub = max(0, total_retail - total_build) if total_build > 0 else 0
+    savings_pct = round((savings_rub / total_retail * 100), 1) if total_retail > 0 and total_build > 0 else 0
+
+    return {
+        "slots": slots,
+        "total_build": total_build,
+        "total_retail": total_retail,
+        "savings_rub": savings_rub,
+        "savings_pct": savings_pct,
+        "filled_count": filled_slots,
+        "total_slots": len(slots)
+    }
+
+
+@app.post("/api/build/select")
+async def select_deal(req: SelectDealRequest):
+    select_deal_for_slot(
+        slot_id=req.slot_id,
+        item_id=req.item_id,
+        title=req.title,
+        price=req.price,
+        url=req.url,
+        location=req.location or ""
+    )
+    return {"status": "ok"}
+
+
+@app.post("/api/build/clear/{slot_id}")
+async def clear_slot(slot_id: str):
+    clear_slot_selection(slot_id)
+    return {"status": "ok"}
+
+
+@app.post("/api/build/reset")
+async def reset_build():
+    reset_all_selections()
+    return {"status": "ok"}
+
+
+@app.post("/api/build/update_slot")
+async def update_slot(req: UpdateSlotRequest):
+    update_slot_config(
+        slot_id=req.slot_id,
+        target_query=req.query,
+        min_price=req.min_price,
+        max_price=req.max_price,
+        required_words=req.required_words or "",
+        exclude_words=req.exclude_words or ""
+    )
+    return {"status": "ok"}
+
+
+@app.post("/api/build/template/{template_id}")
+async def apply_template(template_id: str):
+    success = apply_build_template(template_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Template not found")
+    return {"status": "ok"}
+
+
+@app.get("/api/templates")
+async def list_templates():
+    return [
+        {
+            "id": k,
+            "title": v["title"],
+            "description": v["description"]
+        } for k, v in BUILD_TEMPLATES.items()
+    ]
+
+
+def get_smart_top_deals(query: str, min_price: Optional[int] = None, max_price: Optional[int] = None, limit: int = 10) -> List[Dict[str, Any]]:
+    clean_q = query.strip().lower()
+    clean_q_norm = re.sub(r'(\d+)\s*[хx]\b', r'\1x', clean_q)
+    
+    is_gpu = bool(re.search(r'\b(rtx|gtx|rx|видеокарт|geforce|radeon|gpu)\b', clean_q_norm))
+    is_ram = bool(re.search(r'\b(ddr|озу|память|ram)\b', clean_q_norm))
+
+    # Extract primary model tokens (e.g. "5600x", "3070", "b550m", "3200")
+    stop_words = {'amd', 'intel', 'nvidia', 'процессор', 'видеокарта', 'для', 'плата', 'материнская', 'память', 'оперативная', 'кулер', 'блок', 'питания', 'корпус', 'со', 'стеклом', 'atx', 'matx'}
+    raw_tokens = re.findall(r'[a-zA-Z0-9а-яА-ЯёЁ]+', clean_q_norm)
+    key_tokens = [t for t in raw_tokens if t not in stop_words and len(t) > 1]
+    if not key_tokens:
+        key_tokens = raw_tokens
+
+    results = []
+    seen_ids = set()
+
+    with get_connection() as conn:
+        # 1. Fetch from verified_deals
+        verified_rows = conn.execute("SELECT item_id, query, title, price, url, location FROM verified_deals WHERE is_active = 1").fetchall()
+        for v in verified_rows:
+            iid = str(v["item_id"])
+            p = v["price"]
+            if min_price and p < min_price:
+                continue
+            if max_price and p > max_price:
+                continue
+                
+            t_norm = re.sub(r'(\d+)\s*[хx]\b', r'\1x', v["title"].lower())
+            v_query = (v["query"] or "").lower()
+
+            # Strict match: all key tokens must be in verified deal title or original query
+            if all(k in t_norm or k in v_query for k in key_tokens):
+                seen_ids.add(iid)
+                results.append({
+                    "item_id": iid,
+                    "title": v["title"],
+                    "price": p,
+                    "url": v["url"],
+                    "location": v["location"] or "РФ",
+                    "is_verified": True
+                })
+
+        # 2. Fetch from listings
+        listings_rows = conn.execute("""
+            SELECT item_id, title, price, url, location, raw_description 
+            FROM listings 
+            WHERE price > 0
+        """).fetchall()
+
+        for r in listings_rows:
+            iid = str(r["item_id"])
+            if iid in seen_ids:
+                continue
+            p = r["price"]
+            if min_price and p < min_price:
+                continue
+            if max_price and p > max_price:
+                continue
+
+            t_clean = r["title"].lower()
+            t_norm = re.sub(r'(\d+)\s*[хx]\b', r'\1x', t_clean)
+
+            # Check all key tokens exist
+            if not all(k in t_norm for k in key_tokens):
+                continue
+
+            full_text = f"{t_norm} {(r['raw_description'] or '').lower()}"
+
+            # Defect / trash check
+            if any(re.search(pat, full_text) for pat in DEFAULT_EXCLUDES):
+                continue
+
+            # GPU mobile check
+            if is_gpu:
+                if any(re.search(pat, full_text) for pat in GPU_MOBILE_PATTERNS + GPU_ACCESSORY_PATTERNS):
+                    continue
+
+            # RAM checks (server / sodimm)
+            if is_ram:
+                if any(re.search(pat, full_text) for pat in [
+                    r'(?<![а-яА-ЯёЁa-zA-Z])ecc(?![а-яА-ЯёЁa-zA-Z])',
+                    r'(?<![а-яА-ЯёЁa-zA-Z])reg(?![а-яА-ЯёЁa-zA-Z])',
+                    r'(?<![а-яА-ЯёЁa-zA-Z])сервер',
+                    r'(?<![а-яА-ЯёЁa-zA-Z])sodimm',
+                    r'(?<![а-яА-ЯёЁa-zA-Z])ноутбук',
+                    r'(?<![а-яА-ЯёЁa-zA-Z])x99',
+                    r'(?<![а-яА-ЯёЁa-zA-Z])xeon'
+                ]):
+                    continue
+
+            # Anti-bait check
+            is_bait, reason = check_listing_bait(r["title"], r["raw_description"] or "", query=query)
+            if is_bait:
+                continue
+
+            seen_ids.add(iid)
+            results.append({
+                "item_id": iid,
+                "title": r["title"],
+                "price": p,
+                "url": r["url"],
+                "location": r["location"] or "РФ",
+                "is_verified": False
+            })
+
+    # Sort by price ascending (cheapest first)
+    results.sort(key=lambda x: x["price"])
+    return results[:limit]
+
+
+@app.get("/api/deals/{query}")
+async def get_deals_for_query(query: str, min_price: Optional[int] = None, max_price: Optional[int] = None):
+    deals = get_smart_top_deals(query=query, min_price=min_price, max_price=max_price, limit=12)
+    return {"deals": deals, "total": len(deals)}
+
+
+@app.post("/api/scan/{slot_id}")
+async def trigger_scan(slot_id: str, background_tasks: BackgroundTasks):
+    global scan_state
+    if scan_state["is_running"]:
+        return JSONResponse(status_code=409, content={"status": "busy", "message": "Сканирование уже выполняется"})
+
+    slots = get_current_build()
+    slot = next((s for s in slots if s["slot_id"] == slot_id), None)
+    if not slot:
+        raise HTTPException(status_code=404, detail="Slot not found")
+
+    background_tasks.add_task(
+        run_slot_scan,
+        slot_id=slot["slot_id"],
+        query=slot["target_query"],
+        min_price=slot.get("min_price"),
+        max_price=slot.get("max_price"),
+        required=slot.get("required_words", ""),
+        exclude=slot.get("exclude_words", "")
+    )
+    return {"status": "started", "slot_id": slot_id, "query": slot["target_query"]}
+
+
+@app.get("/api/scan/status")
+async def get_scan_status():
+    return scan_state
+
+
+if __name__ == "__main__":
+    import uvicorn
+    print("\n" + "═" * 70)
+    print("  🚀 ЗАПУСК ВЕБ-ПРИЛОЖЕНИЯ 'AVITO PC BUILDER'")
+    print("  🌐 Откройте в браузере: http://127.0.0.1:8000  или  http://localhost:8000")
+    print("═" * 70 + "\n")
+    uvicorn.run(app, host="0.0.0.0", port=8000)
