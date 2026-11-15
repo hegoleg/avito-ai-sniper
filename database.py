@@ -267,11 +267,94 @@ def get_all_time_top_deals(query: Optional[str] = None, limit: int = 5, db_path:
         return [dict(r) for r in rows]
 
 
+def update_verified_deal_recheck(
+    item_id: str,
+    is_active: bool,
+    price: Optional[int] = None,
+    specs: Optional[Dict[str, Any]] = None,
+    db_path: str = DB_PATH
+):
+    """Updates verified deal after live re-check. If active, bumps verified_at to CURRENT_TIMESTAMP."""
+    with get_connection(db_path) as conn:
+        if is_active:
+            if price is not None and specs is not None:
+                specs_str = json.dumps(specs, ensure_ascii=False) if isinstance(specs, dict) else str(specs)
+                conn.execute("""
+                    UPDATE verified_deals 
+                    SET is_active = 1, price = ?, specs = ?, verified_at = CURRENT_TIMESTAMP
+                    WHERE item_id = ?
+                """, (price, specs_str, str(item_id)))
+            elif price is not None:
+                conn.execute("""
+                    UPDATE verified_deals 
+                    SET is_active = 1, price = ?, verified_at = CURRENT_TIMESTAMP
+                    WHERE item_id = ?
+                """, (price, str(item_id)))
+            else:
+                conn.execute("""
+                    UPDATE verified_deals 
+                    SET is_active = 1, verified_at = CURRENT_TIMESTAMP
+                    WHERE item_id = ?
+                """, (str(item_id),))
+        else:
+            conn.execute("""
+                UPDATE verified_deals 
+                SET is_active = 0 
+                WHERE item_id = ?
+            """, (str(item_id),))
+        conn.commit()
+
+
+def get_stale_verified_deals(
+    max_age_hours: int = 12,
+    query: Optional[str] = None,
+    limit: int = 20,
+    db_path: str = DB_PATH
+) -> List[Dict[str, Any]]:
+    """Returns active verified deals that haven't been re-verified in max_age_hours."""
+    with get_connection(db_path) as conn:
+        q_clause = ""
+        params = [f"-{max_age_hours} hours"]
+        if query and query.strip():
+            q_clause = "AND (LOWER(query) = ? OR LOWER(title) LIKE ?)"
+            clean_q = query.strip().lower()
+            params.append(clean_q)
+            params.append(f"%{clean_q}%")
+        params.append(limit)
+        sql = f"""
+            SELECT item_id, query, title, price, url, location, specs, verified_at
+            FROM verified_deals
+            WHERE is_active = 1 
+              AND datetime(verified_at) <= datetime('now', ?)
+              {q_clause}
+            ORDER BY verified_at ASC
+            LIMIT ?
+        """
+        rows = conn.execute(sql, tuple(params)).fetchall()
+        return [dict(r) for r in rows]
+
+
+def deactivate_expired_verified_deals(max_age_days: int = 3, db_path: str = DB_PATH) -> int:
+    """
+    Deactivates ancient verified deals that have not been re-checked in max_age_days.
+    Prevents stale closed/sold listings (e.g. from weeks ago) from ever being displayed as fresh.
+    """
+    with get_connection(db_path) as conn:
+        cur = conn.execute("""
+            UPDATE verified_deals
+            SET is_active = 0
+            WHERE is_active = 1 AND datetime(verified_at) <= datetime('now', ? || ' days')
+        """, (f"-{max_age_days}",))
+        conn.commit()
+        return cur.rowcount
+
+
 def cleanup_invalid_verified_deals(db_path: str = DB_PATH) -> int:
     """
     Sanitizes verified_deals table by purging false positives:
     - RAM: SODIMM / laptop, ECC / server, multi-generation catalog, capacity mismatch.
     - GPU: mobile chips, cooling/accessories only.
+    - Bait prices: prices <= 500 rub for main components or 100 rub closed listings.
     Returns the count of purged deals.
     """
     purged_count = 0
@@ -281,7 +364,12 @@ def cleanup_invalid_verified_deals(db_path: str = DB_PATH) -> int:
             item_id = str(r["item_id"])
             t = (r["title"] or "").lower()
             q = (r["query"] or "").lower()
+            price = r["price"] or 0
             should_purge = False
+
+            # Bait price / closed price indicator (e.g. 100 rub, 1 rub)
+            if price <= 500:
+                should_purge = True
 
             # Check RAM deals
             if any(k in q or k in t for k in ["ddr", "озу", "ram"]):

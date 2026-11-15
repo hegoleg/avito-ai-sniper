@@ -5,10 +5,12 @@ trigger real-time Avito scraping with anti-bait filters, and track total build s
 """
 
 import asyncio
+import json
 import logging
 import os
 import re
 import sys
+from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 from typing import Dict, Any, Optional, List
 from fastapi import FastAPI, BackgroundTasks, HTTPException
@@ -29,7 +31,11 @@ from database import (
     save_verified_deal,
     mark_deal_reserved_or_inactive,
     get_all_time_top_deals,
-    get_connection
+    get_connection,
+    get_stale_verified_deals,
+    update_verified_deal_recheck,
+    deactivate_expired_verified_deals,
+    cleanup_invalid_verified_deals
 )
 from scraper import AvitoScraper
 from anti_bait import check_listing_bait, check_description_bait
@@ -59,6 +65,10 @@ logger = logging.getLogger("WebBuilder")
 async def lifespan(app: FastAPI):
     init_db()
     init_builder_tables()
+    # Expire dead deals from weeks ago and purge bait/invalid records
+    purged_expired = deactivate_expired_verified_deals(max_age_days=3)
+    purged_invalid = cleanup_invalid_verified_deals()
+    logger.info("Startup cleanup: %d expired deals deactivated, %d invalid deals purged.", purged_expired, purged_invalid)
     logger.info("Avito PC Builder Web App started.")
     yield
     global scraper_instance
@@ -263,14 +273,38 @@ async def run_slot_scan(slot_id: str, query: str, min_price: Optional[int], max_
 
 active_verifying_queries = set()
 
+def format_relative_time(timestamp_str: Optional[str]) -> str:
+    """Formats a SQLite timestamp into a friendly human-readable relative string."""
+    if not timestamp_str:
+        return "недавно"
+    try:
+        ts_clean = timestamp_str.replace("T", " ").split(".")[0]
+        dt = datetime.strptime(ts_clean, "%Y-%m-%d %H:%M:%S")
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        diff = now - dt
+        total_seconds = int(diff.total_seconds())
+        if total_seconds < 0 or total_seconds < 120:
+            return "только что"
+        if total_seconds < 3600:
+            mins = max(1, total_seconds // 60)
+            return f"{mins} мин назад"
+        if total_seconds < 86400:
+            hrs = max(1, total_seconds // 3600)
+            return f"{hrs} ч назад"
+        days = total_seconds // 86400
+        return f"{days} д назад"
+    except Exception:
+        return "недавно"
+
+
 async def auto_verify_slot_candidates(query: str):
     """
-    Automatic background verifier:
-    Silently takes uninspected candidate listings matching this query,
-    visits their pages in a background tab via Playwright,
-    runs full deep inspection (closing, reservation, defects, SODIMM, seller trust, savings),
-    and saves clean approved ones into verified_deals.
-    Zero user clicks needed — 100% automated!
+    Automatic continuous deal maintenance:
+    1. Re-validates stale verified deals (> 6 hours old) by visiting live Avito pages.
+       Deactivates closed/sold/bait listings immediately.
+    2. Checks count of fresh active deals (< 24h). If < 3, auto-scrapes live listings from Avito!
+    3. Deeply verifies candidates with Playwright, applying strict desktop/DIMM/non-defect filters.
+    100% automated — zero user interaction required.
     """
     clean_q = query.strip().lower()
     if clean_q in active_verifying_queries:
@@ -280,7 +314,7 @@ async def auto_verify_slot_candidates(query: str):
     try:
         scraper = await get_shared_scraper()
         
-        # Resolve target and retail_est from pc_build slots
+        # 1. Resolve target and retail_est from pc_build slots
         retail_est = 0
         min_p = None
         max_p = None
@@ -306,13 +340,99 @@ async def auto_verify_slot_candidates(query: str):
         if not target:
             target = SearchTarget(name=query, query=query, min_price=min_p, max_price=max_p)
 
-        # Get candidates from listings not yet in verified_deals
+        # 2. Re-verify stale deals (> 6 hours old) for this query
+        stale_deals = get_stale_verified_deals(max_age_hours=6, query=clean_q, limit=6)
+        for sd in stale_deals:
+            s_url = sd.get("url")
+            s_id = str(sd.get("item_id"))
+            if not s_url:
+                continue
+            try:
+                details = await scraper.get_item_full_details(s_url)
+                is_closed = details.get("is_closed", False)
+                is_page_reserved = details.get("is_page_reserved", False)
+                curr_price = details.get("current_price") or sd.get("price")
+                combined_text = details.get("combined_text", "")
+
+                # Reject nominal/bait prices on page (e.g. 100 rub)
+                if curr_price and curr_price <= 500:
+                    is_closed = True
+
+                valid, reason = target.verify_full_details(
+                    combined_text,
+                    is_page_reserved=is_page_reserved,
+                    is_closed=is_closed
+                )
+
+                if not valid or is_closed or is_page_reserved:
+                    update_verified_deal_recheck(s_id, is_active=False)
+                    logger.info("Deal %s closed/invalid on Avito -> deactivated: %s", s_id, reason)
+                else:
+                    savings_rub = max(0, retail_est - curr_price) if retail_est and retail_est > curr_price else 0
+                    savings_pct = round((savings_rub / retail_est) * 100, 1) if retail_est and retail_est > 0 else 0
+                    specs_dict = {
+                        "query": target.query,
+                        "seller_name": details.get("seller_name", ""),
+                        "seller_rating": details.get("seller_rating", ""),
+                        "seller_reviews": details.get("seller_reviews", ""),
+                        "seller_badge": details.get("seller_badge", ""),
+                        "has_delivery": details.get("has_delivery", False),
+                        "delivery_info": details.get("delivery_info", ""),
+                        "retail_est": retail_est,
+                        "savings_rub": savings_rub,
+                        "savings_pct": savings_pct
+                    }
+                    update_verified_deal_recheck(s_id, is_active=True, price=curr_price, specs=specs_dict)
+                    logger.info("Deal %s re-verified active at %d rub", s_id, curr_price)
+            except Exception as ex:
+                logger.debug("Error re-checking deal %s: %s", s_id, ex)
+
+        # 3. Check count of fresh verified deals (< 24h)
         with get_connection() as conn:
-            verified_ids = set(r[0] for r in conn.execute("SELECT item_id FROM verified_deals").fetchall())
+            fresh_count = conn.execute("""
+                SELECT COUNT(*) FROM verified_deals 
+                WHERE is_active = 1 
+                  AND (LOWER(query) = ? OR LOWER(title) LIKE ?)
+                  AND datetime(verified_at) >= datetime('now', '-24 hours')
+            """, (clean_q, f"%{clean_q}%")).fetchone()[0]
+
+        # 4. If fewer than 3 fresh deals, auto-scrape fresh listings from Avito
+        if fresh_count < 3:
+            logger.info("Only %d fresh verified deals for '%s'. Auto-scraping live listings from Avito...", fresh_count, target.query)
+            try:
+                items_fresh = await scraper.scrape_new_listings(
+                    max_items=25,
+                    query=target.query,
+                    sort_by="104",
+                    min_price=target.min_price,
+                    max_price=target.max_price,
+                    location="all"
+                )
+                items_cheap = await scraper.scrape_new_listings(
+                    max_items=25,
+                    query=target.query,
+                    sort_by="1",
+                    min_price=target.min_price,
+                    max_price=target.max_price,
+                    location="all"
+                )
+                for it in items_cheap + items_fresh:
+                    iid = it.get("item_id")
+                    if iid and it.get("price", 0) > 0:
+                        try:
+                            save_listing(it)
+                        except Exception:
+                            pass
+            except Exception as ex:
+                logger.warning("Auto-scraping error for '%s': %s", target.query, ex)
+
+        # 5. Get candidates from listings not yet in verified_deals
+        with get_connection() as conn:
+            verified_ids = set(r[0] for r in conn.execute("SELECT item_id FROM verified_deals WHERE is_active = 1").fetchall())
             rows = conn.execute("""
                 SELECT item_id, title, price, url, location, raw_description 
                 FROM listings 
-                WHERE price > 0
+                WHERE price > 500
                 ORDER BY price ASC
             """).fetchall()
 
@@ -328,7 +448,7 @@ async def auto_verify_slot_candidates(query: str):
             ok, _ = target.quick_filter(dict(r))
             if ok:
                 to_inspect.append(dict(r))
-            if len(to_inspect) >= 5:
+            if len(to_inspect) >= 6:
                 break
 
         for item in to_inspect:
@@ -341,21 +461,24 @@ async def auto_verify_slot_candidates(query: str):
             combined_text = details.get("combined_text", "")
             is_page_reserved = details.get("is_page_reserved", False)
             is_closed = details.get("is_closed", False)
+            curr_price = details.get("current_price") or item["price"]
+
+            if curr_price and curr_price <= 500:
+                is_closed = True
 
             valid, reason = target.verify_full_details(
                 combined_text,
                 is_page_reserved=is_page_reserved,
                 is_closed=is_closed
             )
-            if not valid:
+            if not valid or is_closed or is_page_reserved:
                 mark_deal_reserved_or_inactive(iid)
-                # Purge invalid candidate from listings so it never surfaces
                 with get_connection() as conn:
                     conn.execute("DELETE FROM listings WHERE item_id = ?", (iid,))
                     conn.commit()
                 continue
 
-            savings_rub = max(0, retail_est - item["price"]) if retail_est and retail_est > item["price"] else 0
+            savings_rub = max(0, retail_est - curr_price) if retail_est and retail_est > curr_price else 0
             savings_pct = round((savings_rub / retail_est) * 100, 1) if retail_est and retail_est > 0 else 0
 
             specs_dict = {
@@ -374,13 +497,13 @@ async def auto_verify_slot_candidates(query: str):
             deal_entry = {
                 "item_id": iid,
                 "title": item["title"],
-                "price": item["price"],
+                "price": curr_price,
                 "url": url,
                 "location": item.get("location", ""),
                 "specs": specs_dict
             }
             save_verified_deal(deal_entry, query=target.query)
-            logger.info("Auto-verified clean deal: %s (%s руб) for %s", item["title"], item["price"], target.query)
+            logger.info("Auto-verified clean deal: %s (%s руб) for %s", item["title"], curr_price, target.query)
 
     except Exception as e:
         logger.debug("Auto-verifier error for %s: %s", query, e)
@@ -543,8 +666,12 @@ def get_smart_top_deals(query: str, min_price: Optional[int] = None, max_price: 
     seen_ids = set()
 
     with get_connection() as conn:
-        # 1. Fetch from verified_deals
-        verified_rows = conn.execute("SELECT item_id, query, title, price, url, location, specs FROM verified_deals WHERE is_active = 1").fetchall()
+        # 1. Fetch from verified_deals (only active and fresh within last 3 days)
+        verified_rows = conn.execute("""
+            SELECT item_id, query, title, price, url, location, specs, verified_at 
+            FROM verified_deals 
+            WHERE is_active = 1 AND datetime(verified_at) >= datetime('now', '-3 days')
+        """).fetchall()
         for v in verified_rows:
             iid = str(v["item_id"])
             p = v["price"]
@@ -604,6 +731,8 @@ def get_smart_top_deals(query: str, min_price: Optional[int] = None, max_price: 
                     "url": v["url"],
                     "location": v["location"] or "РФ",
                     "is_verified": True,
+                    "verified_at": v["verified_at"],
+                    "freshness": format_relative_time(v["verified_at"]),
                     "seller_name": specs_obj.get("seller_name", ""),
                     "seller_rating": specs_obj.get("seller_rating", ""),
                     "seller_reviews": specs_obj.get("seller_reviews", ""),
@@ -713,9 +842,13 @@ async def get_deals_for_query(query: str, min_price: Optional[int] = None, max_p
         limit=12
     )
 
-    # Automated background verification: if verified deals < 4, auto-verify candidates silently
+    # Automated background maintenance: auto-verify if verified count < 4 OR if deals require re-check
     verified_count = sum(1 for d in deals if d.get("is_verified"))
-    if verified_count < 4:
+    has_stale = any(
+        d.get("is_verified") and d.get("freshness") not in ["только что", "1 мин назад", "2 мин назад", "5 мин назад"]
+        for d in deals
+    )
+    if verified_count < 4 or has_stale:
         asyncio.create_task(auto_verify_slot_candidates(query))
 
     return {"deals": deals, "total": len(deals), "verified_count": verified_count}

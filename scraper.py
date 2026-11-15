@@ -368,12 +368,33 @@ class AvitoScraper:
             seller_name = ""
             seller_rating = ""
 
-            # 1. Check for closed/archived listing banner strictly within main container
+            # 1. Price extraction on item page
+            current_price = None
+            meta_price = await tab.query_selector('meta[itemprop="price"]')
+            if meta_price:
+                m_content = await meta_price.get_attribute("content")
+                if m_content:
+                    current_price = clean_price(m_content)
+
+            if current_price is None:
+                price_tag = await tab.query_selector(
+                    '[data-marker="item-view/item-price"] strong, '
+                    '[data-marker="item-view/item-price"] [class*="price-value"], '
+                    '[data-marker="item-view/item-price"], '
+                    '[itemprop="price"], '
+                    '[class*="style-price-value-main"]'
+                )
+                if price_tag:
+                    price_text = await price_tag.inner_text()
+                    current_price = clean_price(price_text)
+
+            # 2. Check for closed/archived listing banner strictly within main container or page alerts
             main_container = await tab.query_selector('[data-marker="item-view"], main') or tab
             closed_el = await main_container.query_selector(
                 '[data-marker="item-view/closed-warning"], [data-marker="closed-item-warning"], '
                 '[data-marker*="closed"], [class*="closed-warning"], [class*="closedWarning"], [class*="item-closed"], '
-                'div:has-text("снято с публикации"), div:has-text("Объявление закрыто"), div:has-text("Товар продан")'
+                'div:has-text("снято с публикации"), p:has-text("снято с публикации"), span:has-text("снято с публикации"), '
+                'div:has-text("Объявление закрыто"), div:has-text("Товар продан")'
             )
             if closed_el:
                 closed_text = (await closed_el.inner_text()).lower()
@@ -381,12 +402,22 @@ class AvitoScraper:
                     is_closed = True
                     is_reserved = True
 
-            # 2. Scope reservation & delivery strictly to the action container
+            # 3. Scope reservation & delivery strictly to the action container
             action_block = await tab.query_selector(
                 '[data-marker="item-view/actions"], '
                 '[class*="style-item-price-and-actions"], '
                 '[class*="item-view-actions"]'
             )
+
+            # Fallback: check if buy/contact buttons are replaced with "Оценить продавца" (closed indicator)
+            if not is_closed and action_block:
+                eval_seller_btn = await action_block.query_selector('button:has-text("Оценить продавца"), a:has-text("Оценить продавца")')
+                contact_btn = await action_block.query_selector(
+                    'button[data-marker*="phone"], button[data-marker*="messenger"], button[data-marker*="delivery"]'
+                )
+                if eval_seller_btn and not contact_btn:
+                    is_closed = True
+                    is_reserved = True
             delivery_block = None
             if action_block:
                 delivery_block = await action_block.query_selector(
@@ -449,6 +480,7 @@ class AvitoScraper:
             return {
                 "full_description": desc,
                 "params_text": params_text,
+                "current_price": current_price,
                 "is_page_reserved": is_reserved,
                 "is_closed": is_closed,
                 "has_delivery": has_delivery,
