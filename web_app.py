@@ -77,7 +77,7 @@ async def lifespan(app: FastAPI):
         scraper_instance = None
     logger.info("Avito PC Builder Web App stopped.")
 
-app = FastAPI(title="Avito PC Builder & Sniper", lifespan=lifespan)
+app = FastAPI(title="Снайпер Авито", lifespan=lifespan)
 
 # Global scraper and scan status
 scanner_lock = asyncio.Lock()

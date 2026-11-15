@@ -769,7 +769,7 @@ def get_all_categories() -> List[Dict[str, str]]:
     return [
         {"id": "gpu", "name": "Видеокарты (GPU)", "icon": "🎮"},
         {"id": "cpu", "name": "Процессоры (CPU)", "icon": "🧠"},
-        {"id": "ram", "name": "Оперативная память (RAM)", "icon": "💾"},
+        {"id": "ram", "name": "Оперативная память", "icon": "💾"},
         {"id": "motherboard", "name": "Материнские платы", "icon": "🎛️"},
         {"id": "ssd", "name": "Накопители (SSD M.2)", "icon": "⚡"},
         {"id": "psu", "name": "Блоки питания (PSU)", "icon": "🔌"},

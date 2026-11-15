@@ -44,7 +44,7 @@ DEFAULT_SLOTS = [
     },
     {
         "slot_id": "ram",
-        "slot_name": "Оперативная память (RAM)",
+        "slot_name": "Оперативная память",
         "icon": "💾",
         "query": "ddr4 16gb 3200",
         "min_price": 2200,
