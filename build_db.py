@@ -197,15 +197,23 @@ def update_slot_config(
     max_price: Optional[int],
     required_words: str = "",
     exclude_words: str = "",
+    retail_est: Optional[int] = None,
     db_path: str = DB_PATH
 ):
     init_builder_tables(db_path)
     with get_connection(db_path) as conn:
-        conn.execute("""
-            UPDATE pc_build
-            SET target_query = ?, min_price = ?, max_price = ?, required_words = ?, exclude_words = ?, updated_at = CURRENT_TIMESTAMP
-            WHERE slot_id = ?
-        """, (target_query.strip(), min_price, max_price, required_words.strip(), exclude_words.strip(), slot_id))
+        if retail_est is not None:
+            conn.execute("""
+                UPDATE pc_build
+                SET target_query = ?, min_price = ?, max_price = ?, required_words = ?, exclude_words = ?, retail_est = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE slot_id = ?
+            """, (target_query.strip(), min_price, max_price, required_words.strip(), exclude_words.strip(), retail_est, slot_id))
+        else:
+            conn.execute("""
+                UPDATE pc_build
+                SET target_query = ?, min_price = ?, max_price = ?, required_words = ?, exclude_words = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE slot_id = ?
+            """, (target_query.strip(), min_price, max_price, required_words.strip(), exclude_words.strip(), slot_id))
         conn.commit()
 
 

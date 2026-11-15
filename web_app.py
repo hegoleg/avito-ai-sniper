@@ -33,7 +33,14 @@ from database import (
 )
 from scraper import AvitoScraper
 from anti_bait import check_listing_bait, check_description_bait
+from negation_filter import mask_negations
 from universal_sniper import SearchTarget, DEFAULT_EXCLUDES, GPU_MOBILE_PATTERNS, GPU_ACCESSORY_PATTERNS
+from hardware_catalog import (
+    HARDWARE_CATALOG,
+    search_catalog,
+    get_all_categories,
+    get_item_by_id
+)
 from build_db import (
     init_builder_tables,
     get_current_build,
@@ -104,6 +111,12 @@ class UpdateSlotRequest(BaseModel):
     max_price: Optional[int] = None
     required_words: Optional[str] = ""
     exclude_words: Optional[str] = ""
+    retail_est: Optional[int] = None
+
+
+class ApplyCatalogItemRequest(BaseModel):
+    slot_id: str
+    catalog_id: str
 
 
 # Scraper Background Task
@@ -290,9 +303,51 @@ async def update_slot(req: UpdateSlotRequest):
         min_price=req.min_price,
         max_price=req.max_price,
         required_words=req.required_words or "",
-        exclude_words=req.exclude_words or ""
+        exclude_words=req.exclude_words or "",
+        retail_est=req.retail_est
     )
     return {"status": "ok"}
+
+
+@app.get("/api/catalog/categories")
+async def list_catalog_categories():
+    """Returns list of component categories."""
+    return get_all_categories()
+
+
+@app.get("/api/catalog")
+async def query_catalog(query: str = "", category: Optional[str] = None):
+    """Searches hardware chips/components in catalog."""
+    items = search_catalog(query=query, category=category, limit=60)
+    return {"items": items, "count": len(items)}
+
+
+@app.get("/api/catalog/{item_id}")
+async def get_catalog_item_endpoint(item_id: str):
+    """Retrieves single catalog item."""
+    it = get_item_by_id(item_id)
+    if not it:
+        raise HTTPException(status_code=404, detail="Catalog item not found")
+    return it
+
+
+@app.post("/api/build/apply_catalog")
+async def apply_catalog_to_slot(req: ApplyCatalogItemRequest):
+    """Applies a selected hardware chip from catalog into a PC build slot."""
+    item = get_item_by_id(req.catalog_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Catalog item not found")
+
+    update_slot_config(
+        slot_id=req.slot_id,
+        target_query=item["query"],
+        min_price=item.get("min_price"),
+        max_price=item.get("max_price"),
+        required_words=",".join(item.get("required_words", [])),
+        exclude_words=",".join(item.get("exclude_words", [])),
+        retail_est=item.get("retail_est")
+    )
+    return {"status": "ok", "applied": item}
 
 
 @app.post("/api/build/template/{template_id}")
@@ -382,14 +437,15 @@ def get_smart_top_deals(query: str, min_price: Optional[int] = None, max_price: 
                 continue
 
             full_text = f"{t_norm} {(r['raw_description'] or '').lower()}"
+            masked_eval = mask_negations(full_text).lower()
 
-            # Defect / trash check
-            if any(re.search(pat, full_text) for pat in DEFAULT_EXCLUDES):
+            # Defect / trash check (with negation awareness)
+            if any(re.search(pat, masked_eval) for pat in DEFAULT_EXCLUDES):
                 continue
 
             # GPU mobile check
             if is_gpu:
-                if any(re.search(pat, full_text) for pat in GPU_MOBILE_PATTERNS + GPU_ACCESSORY_PATTERNS):
+                if any(re.search(pat, masked_eval) for pat in GPU_MOBILE_PATTERNS + GPU_ACCESSORY_PATTERNS):
                     continue
 
             # RAM checks (server / sodimm)
@@ -427,7 +483,13 @@ def get_smart_top_deals(query: str, min_price: Optional[int] = None, max_price: 
 
 @app.get("/api/deals/{query}")
 async def get_deals_for_query(query: str, min_price: Optional[int] = None, max_price: Optional[int] = None):
-    deals = get_smart_top_deals(query=query, min_price=min_price, max_price=max_price, limit=12)
+    deals = await asyncio.to_thread(
+        get_smart_top_deals,
+        query=query,
+        min_price=min_price,
+        max_price=max_price,
+        limit=12
+    )
     return {"deals": deals, "total": len(deals)}
 
 
@@ -441,6 +503,15 @@ async def trigger_scan(slot_id: str, background_tasks: BackgroundTasks):
     slot = next((s for s in slots if s["slot_id"] == slot_id), None)
     if not slot:
         raise HTTPException(status_code=404, detail="Slot not found")
+
+    # Prevent rapid double-click race conditions
+    scan_state["is_running"] = True
+    scan_state["slot_id"] = slot_id
+    scan_state["query"] = slot["target_query"]
+    scan_state["message"] = f"Подготовка к поиску '{slot['target_query']}'..."
+    scan_state["progress"] = 5
+    scan_state["new_deals_count"] = 0
+    scan_state["last_error"] = None
 
     background_tasks.add_task(
         run_slot_scan,

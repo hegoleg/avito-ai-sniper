@@ -65,6 +65,7 @@ from verification_queue import (
     async_request_pause,
     BackoffManager
 )
+from hardware_catalog import search_catalog, get_item_by_id
 
 logging.basicConfig(
     level=logging.INFO,
@@ -198,8 +199,8 @@ class SearchTarget:
         if is_page_reserved:
             return False, "Товар зарезервирован (Авито Доставка)"
 
-        if not combined_text:
-            return True, "OK"
+        if not combined_text or not combined_text.strip():
+            return False, "Не удалось получить описание товара (таймаут, капча или блок)"
 
         if is_reserved_text(combined_text):
             return False, "Товар зарезервирован / в резерве"
@@ -527,6 +528,7 @@ async def main():
     parser.add_argument("--exclude", type=str, default="", help="Минус-слова через запятую")
     parser.add_argument("--required", type=str, default="", help="Обязательные слова через запятую")
     parser.add_argument("--preset", type=str, default=None, help="Номер готового шаблона из presets.json")
+    parser.add_argument("--chip", type=str, default=None, help="Выбрать готовый чип из каталога комплектующих (например, '3070', '4060', '7500f')")
     parser.add_argument("--interval", type=int, default=60, help="Интервал обновления в секундах")
     parser.add_argument("--setup", action="store_true", help="Открыть окно браузера для прохождения капчи")
     parser.add_argument("--test-notify", action="store_true", help="Отправить тестовое уведомление в Telegram")
@@ -565,7 +567,23 @@ async def main():
 
     presets = load_presets()
 
-    if args.preset and str(args.preset) in presets:
+    if args.chip:
+        catalog_matches = search_catalog(args.chip, limit=1)
+        if not catalog_matches:
+            print(f"⚠️ Чип '{args.chip}' не найден в каталоге. Запустите без аргументов для интерактивного меню.")
+            return
+        chip_item = catalog_matches[0]
+        print(f"✅ Выбран чип из каталога: {chip_item['name']} ({chip_item.get('specs', '')})")
+        target = SearchTarget(
+            name=chip_item["name"],
+            query=chip_item["query"],
+            min_price=args.min if args.min is not None else chip_item.get("min_price"),
+            max_price=args.max if args.max is not None else chip_item.get("max_price"),
+            location=args.loc,
+            required_words=chip_item.get("required_words", []),
+            exclude_words=chip_item.get("exclude_words", [])
+        )
+    elif args.preset and str(args.preset) in presets:
         sel = presets[str(args.preset)]
         target = SearchTarget(
             name=sel.get("name", sel["query"]),
@@ -595,7 +613,11 @@ async def main():
     config = load_config()
     notifier = TelegramNotifier(bot_token=config.telegram_bot_token, chat_id=config.telegram_chat_id)
     scraper = AvitoScraper(config, notifier=notifier)
-    queue = VerificationQueue()
+
+    cache_dir = os.path.join(PROJECT_ROOT, "user_data")
+    os.makedirs(cache_dir, exist_ok=True)
+    cache_file = os.path.join(cache_dir, "verification_cache.json")
+    queue = VerificationQueue(cache_file=cache_file)
     backoff = BackoffManager()
 
     print("\n⏳ Запуск браузера...")
@@ -613,9 +635,15 @@ async def main():
                 await scan_target_once(scraper, target, cycle, queue=queue, notifier=notifier, backoff=backoff)
                 sleep_dur = await async_sleep_jitter(poll_sec, jitter_pct=0.20)
                 print(f"\n  ⏰ Следующая проверка через {sleep_dur:.1f} сек... (Ctrl+C для выхода)")
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, asyncio.CancelledError):
         print("\n  🛑 Остановка снайпера...")
     finally:
+        try:
+            queue.save_to_json(cache_file)
+            logger.info("Состояние очереди сохранено на диск.")
+        except Exception as q_err:
+            logger.debug("Не удалось сохранить кеш очереди: %s", q_err)
+
         await scraper.close()
         print("  👋 Браузерная сессия закрыта.")
 

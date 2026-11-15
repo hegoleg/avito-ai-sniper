@@ -489,6 +489,200 @@
             font-size: 11px;
         }
 
+        /* Catalog Modal Styles */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(4, 7, 15, 0.85);
+            backdrop-filter: blur(8px);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+            padding: 16px;
+        }
+
+        .modal-overlay.active {
+            display: flex;
+        }
+
+        .modal-window {
+            background: #101728;
+            border: 1px solid #23314d;
+            border-radius: var(--radius-lg);
+            width: 100%;
+            max-width: 920px;
+            max-height: 88vh;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6);
+            overflow: hidden;
+            animation: modalFadeIn 0.2s ease-out;
+        }
+
+        @keyframes modalFadeIn {
+            from { opacity: 0; transform: scale(0.96); }
+            to { opacity: 1; transform: scale(1); }
+        }
+
+        .modal-header {
+            padding: 14px 20px;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: rgba(19, 27, 46, 0.95);
+        }
+
+        .modal-title {
+            font-size: 16px;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: #fff;
+        }
+
+        .modal-close-btn {
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            font-size: 20px;
+            cursor: pointer;
+            padding: 4px 8px;
+            border-radius: 6px;
+            line-height: 1;
+        }
+
+        .modal-close-btn:hover {
+            color: #fff;
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .catalog-filter-bar {
+            padding: 14px 20px 10px;
+            background: #0d1322;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .catalog-search-input {
+            width: 100%;
+            padding: 10px 14px;
+            font-size: 14px;
+            background: #080c16;
+            border: 1px solid #23314d;
+            border-radius: 10px;
+            color: #fff;
+        }
+
+        .catalog-categories {
+            display: flex;
+            gap: 6px;
+            overflow-x: auto;
+            padding-bottom: 4px;
+        }
+
+        .cat-pill {
+            font-size: 12px;
+            padding: 5px 12px;
+            border-radius: 99px;
+            background: #17223b;
+            color: var(--text-muted);
+            border: 1px solid #23314d;
+            cursor: pointer;
+            white-space: nowrap;
+            transition: all 0.15s ease;
+        }
+
+        .cat-pill:hover, .cat-pill.active {
+            background: linear-gradient(135deg, #0284c7, #2563eb);
+            color: #fff;
+            border-color: #38bdf8;
+        }
+
+        .catalog-list {
+            padding: 16px 20px;
+            overflow-y: auto;
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+            gap: 12px;
+            flex: 1;
+        }
+
+        .catalog-card {
+            background: #131b2e;
+            border: 1px solid #202b42;
+            border-radius: 12px;
+            padding: 12px 14px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            transition: all 0.2s ease;
+        }
+
+        .catalog-card:hover {
+            border-color: #38bdf8;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 16px rgba(56, 189, 248, 0.15);
+        }
+
+        .catalog-card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 6px;
+            margin-bottom: 6px;
+        }
+
+        .catalog-subcat {
+            font-size: 10px;
+            font-weight: 700;
+            color: #38bdf8;
+            background: rgba(56, 189, 248, 0.12);
+            padding: 2px 6px;
+            border-radius: 4px;
+        }
+
+        .catalog-chip-name {
+            font-size: 14px;
+            font-weight: 700;
+            color: #fff;
+            margin-bottom: 4px;
+        }
+
+        .catalog-specs {
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-bottom: 8px;
+            line-height: 1.4;
+        }
+
+        .catalog-price-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding-top: 8px;
+            border-top: 1px solid rgba(255, 255, 255, 0.05);
+            margin-top: 6px;
+        }
+
+        .catalog-price-val {
+            font-size: 13px;
+            font-weight: 800;
+            color: #34d399;
+        }
+
+        .catalog-retail-val {
+            font-size: 10px;
+            color: var(--text-muted);
+        }
+
         footer {
             background: #090d16;
             border-top: 1px solid var(--border-color);
@@ -514,6 +708,9 @@
                 </div>
 
                 <div class="header-actions">
+                    <button onclick="openCatalogModal()" class="btn-primary" style="font-size: 12px; background: linear-gradient(135deg, #0284c7, #2563eb);">
+                        <span>📖</span> Каталог чипов
+                    </button>
                     <select id="templateSelector" onchange="loadTemplate(this.value)">
                         <option value="">⚡ Выберите готовый шаблон сборки...</option>
                     </select>
@@ -581,6 +778,30 @@
             </div>
         </div>
     </main>
+
+    <!-- Catalog Modal -->
+    <div id="catalogModal" class="modal-overlay" onclick="handleModalBackdropClick(event)">
+        <div class="modal-window">
+            <div class="modal-header">
+                <div class="modal-title">
+                    <span>📖</span>
+                    <span id="catalogModalTitle">Каталог комплектующих (поиск по чипам)</span>
+                </div>
+                <button class="modal-close-btn" onclick="closeCatalogModal()">✕</button>
+            </div>
+
+            <div class="catalog-filter-bar">
+                <input type="text" id="catalogSearchInput" class="catalog-search-input" placeholder="🔍 Быстрый поиск чипа (например: 3070, 4060, 7500f, ddr5, 1tb, b650)..." oninput="onCatalogSearchChange()">
+                <div id="catalogCategories" class="catalog-categories">
+                    <!-- Populated by JS -->
+                </div>
+            </div>
+
+            <div id="catalogList" class="catalog-list">
+                <!-- Populated by JS -->
+            </div>
+        </div>
+    </div>
 
     <!-- Footer -->
     <footer>
@@ -727,7 +948,12 @@
 
                     <div class="slot-controls">
                         <div>
-                            <label style="font-size: 11px; color: #94a3b8; font-weight: 600; display: block; margin-bottom: 3px;">Поисковый запрос</label>
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 3px;">
+                                <label style="font-size: 11px; color: #94a3b8; font-weight: 600;">Поисковый запрос</label>
+                                <button onclick="openCatalogModal('${s.slot_id}', '${s.slot_id}')" style="font-size: 11px; padding: 2px 8px; background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 6px;">
+                                    ✨ Выбрать чип
+                                </button>
+                            </div>
                             <input type="text" id="query_${s.slot_id}" value="${s.target_query}" style="width: 100%;">
                         </div>
                         <div class="input-row">
@@ -912,6 +1138,189 @@
                 await fetchBuildState();
             } catch (e) {
                 alert("Ошибка: " + e);
+            }
+        }
+
+        // --- Hardware Catalog Modal Logic ---
+        let activeCatalogSlotId = null;
+        let activeCatalogCategory = 'all';
+        let catalogCategories = [];
+        let catalogDebounceTimer = null;
+
+        async function openCatalogModal(slotId = null, defaultCategory = null) {
+            activeCatalogSlotId = slotId;
+            const modal = document.getElementById('catalogModal');
+            modal.classList.add('active');
+
+            const titleEl = document.getElementById('catalogModalTitle');
+            if (slotId) {
+                const slot = currentBuild.find(s => s.slot_id === slotId);
+                titleEl.innerText = `Выбор чипа для слота: ${slot ? slot.slot_name : slotId}`;
+            } else {
+                titleEl.innerText = 'Каталог комплектующих (поиск по чипам)';
+            }
+
+            if (!catalogCategories.length) {
+                try {
+                    const res = await fetch('/api/catalog/categories');
+                    catalogCategories = await res.json();
+                    renderCatalogCategories();
+                } catch (e) {
+                    console.error("Failed to load catalog categories:", e);
+                }
+            }
+
+            if (defaultCategory) {
+                activeCatalogCategory = defaultCategory;
+            } else {
+                activeCatalogCategory = 'all';
+            }
+            updateActiveCategoryPills();
+
+            document.getElementById('catalogSearchInput').value = "";
+            await loadCatalogItems();
+        }
+
+        function closeCatalogModal() {
+            const modal = document.getElementById('catalogModal');
+            modal.classList.remove('active');
+            activeCatalogSlotId = null;
+        }
+
+        function handleModalBackdropClick(event) {
+            if (event.target.id === 'catalogModal') {
+                closeCatalogModal();
+            }
+        }
+
+        function renderCatalogCategories() {
+            const container = document.getElementById('catalogCategories');
+            container.innerHTML = `
+                <div class="cat-pill ${activeCatalogCategory === 'all' ? 'active' : ''}" onclick="setCatalogCategory('all')">
+                    Все
+                </div>
+            `;
+            catalogCategories.forEach(cat => {
+                const pill = document.createElement('div');
+                pill.className = `cat-pill ${activeCatalogCategory === cat.id ? 'active' : ''}`;
+                pill.dataset.catId = cat.id;
+                pill.innerHTML = `<span>${cat.icon}</span> ${cat.name}`;
+                pill.onclick = () => setCatalogCategory(cat.id);
+                container.appendChild(pill);
+            });
+        }
+
+        function updateActiveCategoryPills() {
+            document.querySelectorAll('#catalogCategories .cat-pill').forEach(pill => {
+                if (pill.dataset.catId === activeCatalogCategory || (!pill.dataset.catId && activeCatalogCategory === 'all')) {
+                    pill.classList.add('active');
+                } else {
+                    pill.classList.remove('active');
+                }
+            });
+        }
+
+        async function setCatalogCategory(catId) {
+            activeCatalogCategory = catId;
+            updateActiveCategoryPills();
+            await loadCatalogItems();
+        }
+
+        function onCatalogSearchChange() {
+            clearTimeout(catalogDebounceTimer);
+            catalogDebounceTimer = setTimeout(loadCatalogItems, 250);
+        }
+
+        async function loadCatalogItems() {
+            const listEl = document.getElementById('catalogList');
+            listEl.innerHTML = '<div style="grid-column: 1/-1; text-align: center; color: #64748b; padding: 30px;">Загрузка комплектующих...</div>';
+
+            const query = document.getElementById('catalogSearchInput').value;
+            let url = `/api/catalog?query=${encodeURIComponent(query)}`;
+            if (activeCatalogCategory && activeCatalogCategory !== 'all') {
+                url += `&category=${encodeURIComponent(activeCatalogCategory)}`;
+            }
+
+            try {
+                const res = await fetch(url);
+                const data = await res.json();
+                renderCatalogItems(data.items || []);
+            } catch (e) {
+                listEl.innerHTML = `<div style="grid-column: 1/-1; color: #f43f5e; padding: 20px;">Ошибка загрузки каталога: ${e}</div>`;
+            }
+        }
+
+        function renderCatalogItems(items) {
+            const listEl = document.getElementById('catalogList');
+            if (!items.length) {
+                listEl.innerHTML = '<div style="grid-column: 1/-1; text-align: center; color: #64748b; padding: 40px;">Ничего не найдено. Попробуйте изменить поисковый запрос или категорию.</div>';
+                return;
+            }
+
+            listEl.innerHTML = "";
+            items.forEach(it => {
+                const card = document.createElement('div');
+                card.className = "catalog-card";
+                card.innerHTML = `
+                    <div>
+                        <div class="catalog-card-header">
+                            <span class="catalog-subcat">${it.subcategory || it.category.toUpperCase()}</span>
+                            <span style="font-size: 11px; color: #94a3b8;">${it.chip}</span>
+                        </div>
+                        <div class="catalog-chip-name">${it.name}</div>
+                        <div class="catalog-specs">${it.specs || ''}</div>
+                    </div>
+
+                    <div>
+                        <div class="catalog-price-row">
+                            <div>
+                                <div class="catalog-price-val">${(it.min_price || 0).toLocaleString('ru-RU')} — ${(it.max_price || 0).toLocaleString('ru-RU')} ₽</div>
+                                <div class="catalog-retail-val">Новый: ~${(it.retail_est || 0).toLocaleString('ru-RU')} ₽</div>
+                            </div>
+                            <button onclick="applyCatalogItemToBuild('${it.id}')" class="btn-primary" style="font-size: 11px; padding: 6px 10px;">
+                                <span>➕</span> ${activeCatalogSlotId ? 'В этот слот' : 'Выбрать'}
+                            </button>
+                        </div>
+                    </div>
+                `;
+                listEl.appendChild(card);
+            });
+        }
+
+        async function applyCatalogItemToBuild(catalogId) {
+            let slotId = activeCatalogSlotId;
+            if (!slotId) {
+                const catRes = await fetch(`/api/catalog/${catalogId}`);
+                const catItem = await catRes.json();
+                const matchedSlot = currentBuild.find(s => s.slot_id === catItem.category);
+                if (matchedSlot) {
+                    slotId = matchedSlot.slot_id;
+                } else if (currentBuild.length) {
+                    slotId = currentBuild[0].slot_id;
+                }
+            }
+
+            if (!slotId) {
+                alert("Не выбран слот для добавления детали.");
+                return;
+            }
+
+            try {
+                const res = await fetch('/api/build/apply_catalog', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ slot_id: slotId, catalog_id: catalogId })
+                });
+                const result = await res.json();
+                if (result.status === 'ok') {
+                    playChime();
+                    closeCatalogModal();
+                    await fetchBuildState();
+                } else {
+                    alert("Ошибка: " + (result.detail || "Не удалось применить"));
+                }
+            } catch (e) {
+                alert("Ошибка применения: " + e);
             }
         }
 

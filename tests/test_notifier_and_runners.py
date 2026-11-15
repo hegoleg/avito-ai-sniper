@@ -310,11 +310,14 @@ class TestUniversalSniperIntegration(unittest.TestCase):
         self.assertIn("Кулер", reason)
 
 
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
 class TestRunnerForwarders(unittest.TestCase):
     def test_sniper_ddr4_help_forwarder(self):
         """python sniper_ddr4.py --help delegates to universal_sniper.py."""
         cmd = [sys.executable, "sniper_ddr4.py", "--help"]
-        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=os.getcwd())
+        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=PROJECT_ROOT)
         self.assertEqual(res.returncode, 0)
         self.assertIn("universal_sniper.py", res.stdout)
         self.assertIn("--preset", res.stdout)
@@ -322,7 +325,7 @@ class TestRunnerForwarders(unittest.TestCase):
     def test_main_help(self):
         """python main.py --help runs cleanly."""
         cmd = [sys.executable, "main.py", "--help"]
-        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=os.getcwd())
+        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=PROJECT_ROOT)
         self.assertEqual(res.returncode, 0)
         self.assertIn("Avito RAM AI Sniper Bot", res.stdout)
         self.assertIn("--scan", res.stdout)

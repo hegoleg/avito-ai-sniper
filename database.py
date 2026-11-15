@@ -8,7 +8,7 @@ import json
 import os
 import logging
 from typing import Optional, Dict, Any, List
-from datetime import datetime
+from datetime import datetime, timezone
 from contextlib import contextmanager
 
 logger = logging.getLogger(__name__)
@@ -21,6 +21,8 @@ def get_connection(db_path: str = DB_PATH):
     """Context manager that guarantees the SQLite connection is closed upon exit."""
     conn = sqlite3.connect(db_path, timeout=30.0)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA busy_timeout = 30000")
+    conn.execute("PRAGMA synchronous = NORMAL")
     try:
         yield conn
     finally:
@@ -126,7 +128,7 @@ def save_listing(item: Dict[str, Any], db_path: str = DB_PATH):
         if isinstance(red_flags_val, list):
             red_flags_val = json.dumps(red_flags_val, ensure_ascii=False)
 
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         if existing:
             old_price = existing["price"]
             new_price = item.get("price")
