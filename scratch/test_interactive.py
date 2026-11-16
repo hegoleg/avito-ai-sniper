@@ -2,7 +2,7 @@ import asyncio
 from playwright.async_api import async_playwright
 
 async def interactive_test():
-    profile_dir = "C:/Users/Egor/avito-ram-sniper/profile"
+    profile_dir = "C:/Users/Egor/avito-ai-sniper/profile"
     print("Launching visible browser with persistent context...")
     
     async with async_playwright() as p:

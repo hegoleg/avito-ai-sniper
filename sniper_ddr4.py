@@ -1,5 +1,5 @@
 """
-DDR4 2x8 3200MHz RAM Sniper — Canonical Forwarder.
+DDR4 2x8 3200MHz Deal Sniper — Canonical Forwarder.
 Delegates execution to universal_sniper.py using Preset 1.
 Ensures full backward compatibility while eliminating code duplication.
 """

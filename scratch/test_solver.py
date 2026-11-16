@@ -61,7 +61,7 @@ async def human_drag(page, start_x, start_y, distance):
     await page.wait_for_timeout(1000)
 
 async def test_solve():
-    profile_dir = "C:/Users/Egor/avito-ram-sniper/profile"
+    profile_dir = "C:/Users/Egor/avito-ai-sniper/profile"
     async with async_playwright() as p:
         context = await p.chromium.launch_persistent_context(profile_dir, headless=True)
         page = context.pages[0] if context.pages else await context.new_page()
@@ -124,7 +124,7 @@ async def test_solve():
             
             title_after = await page.title()
             print("Title after drag:", title_after)
-            await page.screenshot(path="C:/Users/Egor/avito-ram-sniper/after_drag.png")
+            await page.screenshot(path="C:/Users/Egor/avito-ai-sniper/after_drag.png")
             
         await context.close()
 

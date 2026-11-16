@@ -2,7 +2,7 @@ import asyncio
 from playwright.async_api import async_playwright
 
 async def get_title():
-    profile_dir = "C:/Users/Egor/avito-ram-sniper/profile"
+    profile_dir = "C:/Users/Egor/avito-ai-sniper/profile"
     async with async_playwright() as p:
         context = await p.chromium.launch_persistent_context(
             profile_dir,
@@ -14,7 +14,7 @@ async def get_title():
         await page.wait_for_timeout(4000)
         title = await page.title()
         url_now = page.url
-        with open("C:/Users/Egor/avito-ram-sniper/page_title.txt", "w", encoding="utf-8") as f:
+        with open("C:/Users/Egor/avito-ai-sniper/page_title.txt", "w", encoding="utf-8") as f:
             f.write(f"Title: {title}\nURL: {url_now}\n")
         await context.close()
 

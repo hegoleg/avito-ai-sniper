@@ -2,7 +2,7 @@ import asyncio
 from playwright.async_api import async_playwright
 
 async def test_real():
-    user_data_dir = "C:/Users/Egor/avito-ram-sniper/chrome_profile"
+    user_data_dir = "C:/Users/Egor/avito-ai-sniper/chrome_profile"
     async with async_playwright() as p:
         context = await p.chromium.launch_persistent_context(
             user_data_dir,

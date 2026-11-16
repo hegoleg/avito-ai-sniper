@@ -2,7 +2,7 @@ import asyncio
 from playwright.async_api import async_playwright
 
 async def check():
-    profile_dir = "C:/Users/Egor/avito-ram-sniper/profile"
+    profile_dir = "C:/Users/Egor/avito-ai-sniper/profile"
     async with async_playwright() as p:
         context = await p.chromium.launch_persistent_context(profile_dir, headless=True)
         page = context.pages[0] if context.pages else await context.new_page()

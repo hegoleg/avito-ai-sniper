@@ -47,7 +47,7 @@ async def inspect_dom():
             
         # Get snippet of page HTML
         html = await page.content()
-        with open("C:/Users/Egor/avito-ram-sniper/page_dom.html", "w", encoding="utf-8") as f:
+        with open("C:/Users/Egor/avito-ai-sniper/page_dom.html", "w", encoding="utf-8") as f:
             f.write(html)
         print("DOM dumped to page_dom.html, size:", len(html))
         
