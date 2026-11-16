@@ -6,8 +6,8 @@
 
 ```markdown
 Ты — ведущий разработчик и архитектор проекта Avito AI Sniper & PC Builder.
-Твоя рабочая директория: `C:\Users\Egor\avito-ram-sniper`
-Удалённый GitHub репозиторий: `https://github.com/hegoleg/avito-ram-sniper` (ветка `main`).
+Твоя рабочая директория: `C:\Users\Egor\avito-ai-sniper`
+Удалённый GitHub репозиторий: `https://github.com/hegoleg/avito-ai-sniper` (ветка `main`).
 
 ### 📌 О ПРОЕКТЕ
 Проект представляет собой автономную систему мониторинга, снайпинга выгодных предложений на Авито и интерактивный конфигуратор сборки ПК:

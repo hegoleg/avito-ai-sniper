@@ -26,7 +26,7 @@
 Самый удобный способ собирать ПК и ловить комплектующие на Авито.
 Просто дважды кликните по файлу [start_builder.bat](start_builder.bat) в папке проекта или выполните:
 ```powershell
-cd avito-ram-sniper
+cd avito-ai-sniper
 python web_app.py
 ```
 Браузер автоматически откроет интерфейс: **`http://localhost:8000`**
@@ -37,7 +37,7 @@ python web_app.py
 
 Все команды выполняются в терминале PowerShell из директории проекта:
 ```powershell
-cd avito-ram-sniper
+cd avito-ai-sniper
 ```
 
 ### Самые популярные консольные запуски:
@@ -265,7 +265,7 @@ python main.py --stats
 ## 📂 Структура проекта
 
 ```
-avito-ram-sniper/
+avito-ai-sniper/
 ├── universal_sniper.py   # ⭐ Главный универсальный снайпер для любых товаров
 ├── presets.json          # ⭐ Набор настроенных пресетов (GPU, CPU, платы, телефоны)
 ├── sniper_ddr4.py        # Специализированный снайпер для ОЗУ DDR4 2x8 3200
