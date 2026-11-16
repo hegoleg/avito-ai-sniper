@@ -1,5 +1,5 @@
 """
-Avito RAM Sniper - Main Entry Point & Daemon.
+Avito AI Sniper - Main Entry Point & Daemon.
 Delegates scanning and monitoring to the unified universal_sniper pipeline,
 eliminating duplicate execution paths, shallow parsing, and fixed sleeps.
 """
@@ -131,7 +131,7 @@ async def run_setup(config):
 def run_test_ai(analyzer):
     """Tests AI / Heuristic analysis on tricky test cases."""
     print("\n" + "=" * 60)
-    print("ТЕСТИРОВАНИЕ АНАЛИЗА ИИ (RAM SNIPER)")
+    print("ТЕСТИРОВАНИЕ АНАЛИЗА ИИ (AI SNIPER)")
     print("=" * 60)
 
     test_cases = [
@@ -241,7 +241,7 @@ def run_demo(analyzer, notifier):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Avito RAM AI Sniper Bot")
+    parser = argparse.ArgumentParser(description="Avito AI Sniper Bot")
     parser.add_argument("--scan", action="store_true", help="Выполнить один цикл сканирования")
     parser.add_argument("--loop", action="store_true", help="Запустить постоянный мониторинг")
     parser.add_argument("--setup", action="store_true", help="Открыть окно браузера для прохождения капчи")

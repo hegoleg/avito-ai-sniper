@@ -201,7 +201,7 @@ async def scan_once(config, scraper, scan_num):
 async def main():
     print()
     print("╔══════════════════════════════════════════════════════════════════╗")
-    print("║        🎯 AVITO RAM SNIPER — LIVE MONITOR                      ║")
+    print("║        🎯 AVITO AI SNIPER — LIVE MONITOR                       ║")
     print("║        Мониторинг цен на ОЗУ (кризис памяти 2026)              ║")
     print("║        Сканирование каждую минуту | Ctrl+C для остановки        ║")
     print("╚══════════════════════════════════════════════════════════════════╝")

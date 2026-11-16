@@ -1,5 +1,5 @@
 """
-Negation Filter Module for Avito RAM Sniper.
+Negation Filter Module for Avito AI Sniper.
 
 Implements the Two-Pass Negation Masking Architecture:
 - Pass 1: Identifies and masks negated defect phrases (e.g. "не битая", "без дефектов",

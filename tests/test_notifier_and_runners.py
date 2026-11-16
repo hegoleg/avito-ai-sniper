@@ -343,7 +343,7 @@ class TestRunnerForwarders(unittest.TestCase):
             cwd=PROJECT_ROOT,
         )
         self.assertEqual(res.returncode, 0)
-        self.assertIn("Avito RAM AI Sniper Bot", res.stdout)
+        self.assertIn("Avito AI Sniper Bot", res.stdout)
         self.assertIn("--scan", res.stdout)
         self.assertIn("--loop", res.stdout)
 

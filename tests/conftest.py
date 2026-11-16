@@ -1,5 +1,5 @@
 """
-Shared test fixtures and sample data for Avito RAM Sniper test suites.
+Shared test fixtures and sample data for Avito AI Sniper test suites.
 Works seamlessly with both pytest and python's built-in unittest.
 """
 
