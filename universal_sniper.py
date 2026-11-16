@@ -122,6 +122,98 @@ def build_word_pattern(word: str) -> str:
     return r'(?<![a-zA-Z0-9а-яА-ЯёЁ])' + re.escape(w) + r'(?![a-zA-Z0-9а-яА-ЯёЁ])'
 
 
+# ---------------------------------------------------------------------------
+# Model relevance: the listing title must contain the requested model itself.
+# Prevents "RTX 2070" / "RTX 3080" leaks into an "RTX 3070" search.
+# ---------------------------------------------------------------------------
+
+_UNIT_TOKEN_RE = re.compile(
+    r"^\d+\s*(?:gb|гб|mb|мб|tb|тб|mhz|мгц|ghz|ггц|hz|гц|w|вт|v|в|mm|мм|cm|см|ml|мл)$",
+    re.IGNORECASE,
+)
+_RAM_FREQUENCIES = {
+    "1600", "1866", "2133", "2400", "2666", "2800", "2933", "3000",
+    "3200", "3466", "3600", "3733", "3800", "4000", "4266", "4400",
+    "4600", "4800", "5000", "5200", "5400", "5600", "5800", "6000",
+    "6200", "6400", "6600", "6800", "7000", "7200", "7600", "8000",
+}
+_MODEL_VARIANT_SUFFIXES = ("super", "xtx", "x3d", "ti", "xt", "kf", "ks", "k", "g", "f", "m")
+
+
+def _normalize_query_text(value: str) -> str:
+    return re.sub(r"(\d+)\s*[хx]\b", r"\1x", (value or "").lower().replace("ё", "е"))
+
+
+def _flexible_token_pattern(token: str) -> Optional[str]:
+    """Regex for one token, allowing 'rtx3070' / '5600 X' / 'b550m' style spacing."""
+    if token.isdigit():
+        return r"(?<!\d)" + token + r"(?!\d)"
+    parts = re.findall(r"\d+|[a-zа-я]+", token)
+    if not parts:
+        return None
+    body = r"\s*".join(re.escape(part) for part in parts)
+    return r"(?<![a-zа-я0-9])" + body + r"(?![a-zа-я0-9])"
+
+
+def model_tokens(query: str) -> list:
+    """Extracts tokens that identify the model (3070, 5600x, b550m, ddr4)."""
+    qn = _normalize_query_text(query)
+    is_ram = bool(re.search(r"\b(?:ddr\d?|озу|оперативная|память|ram)\b", qn))
+    tokens = re.findall(r"[a-z0-9а-я]+", qn)
+
+    strong = []
+    for token in tokens:
+        if _UNIT_TOKEN_RE.match(token):
+            continue
+        digits = sum(ch.isdigit() for ch in token)
+        if is_ram:
+            # Capacity and frequency are validated by dedicated RAM filters.
+            if token.isdigit() or digits < 1:
+                continue
+        if token.isdigit():
+            if len(token) >= 3:
+                strong.append(token)
+        elif digits >= 2:
+            strong.append(token)
+
+    if is_ram:
+        strong.extend(t for t in tokens if re.fullmatch(r"ddr[2-5]", t))
+
+    return list(dict.fromkeys(strong))
+
+
+def title_matches_query(title: str, query: str, allow_mobile: bool = False) -> bool:
+    """True when the title really contains the requested model (not a neighbouring one)."""
+    tn = _normalize_query_text(title)
+    qn = _normalize_query_text(query)
+
+    if allow_mobile and re.search(r"\b(rtx|gtx|rx|geforce|radeon|gpu|видеокарт)\b", qn):
+        # When mobile cards are allowed, "RTX 3070M" is still a 3070 search hit.
+        tn = re.sub(r"(?<!\d)(\d{4})\s*m\b", r"\1", tn)
+
+    tokens = model_tokens(qn)
+    if not tokens:
+        return True
+
+    for token in tokens:
+        pattern = _flexible_token_pattern(token)
+        if not pattern or not re.search(pattern, tn):
+            return False
+
+    # Base model must not silently match a variant (3070 -> 3070 Ti, 5600 -> 5600X).
+    query_tokens = re.findall(r"[a-z0-9а-я]+", qn)
+    for token in tokens:
+        if not token.isdigit():
+            continue
+        for suffix in _MODEL_VARIANT_SUFFIXES:
+            if suffix in query_tokens:
+                continue
+            if re.search(r"(?<!\d)" + re.escape(token) + r"\s*" + suffix + r"\b", tn):
+                return False
+
+    return True
+
+
 def load_presets() -> dict:
     if os.path.exists(PRESETS_PATH):
         try:
@@ -141,7 +233,8 @@ class SearchTarget:
         max_price: Optional[int] = None,
         location: str = "all",
         required_words: Optional[List[str]] = None,
-        exclude_words: Optional[List[str]] = None
+        exclude_words: Optional[List[str]] = None,
+        exclude_mobile: Optional[bool] = None
     ):
         self.name = name
         self.query = query.strip()
@@ -150,11 +243,13 @@ class SearchTarget:
         self.location = location.strip() or "all"
         self.required_words = [re.sub(r'(\d+)\s*[хx]\b', r'\1x', w.lower()) for w in (required_words or [])]
         self.exclude_words = [re.sub(r'(\d+)\s*[хx]\b', r'\1x', w.lower()) for w in (exclude_words or [])]
+        self.exclude_mobile = exclude_mobile is not False
 
         # Auto-detect if this is a GPU search to protect against mobile / accessories
         q_lower = self.query.lower()
         self.is_gpu_search = bool(re.search(r"\b(rtx|gtx|rx|видеокарт|geforce|radeon|gpu)\b", q_lower))
-        self.allow_mobile = bool(re.search(r"\b(mobile|мобайл|\bm\b|ноутбук)\b", q_lower))
+        explicit_mobile = bool(re.search(r"\b(mobile|мобайл|\bm\b|ноутбук)\b", q_lower))
+        self.allow_mobile = explicit_mobile or not self.exclude_mobile
 
         # Auto-detect if this is a RAM search to protect against laptop / server / capacity mismatch
         self.is_ram_search = bool(re.search(r"\b(ddr\d?|озу|память|ram)\b", q_lower))
@@ -240,6 +335,10 @@ class SearchTarget:
             if self.target_ram_freq and self.target_ram_freq >= 3000:
                 if re.search(r"\b(2133|2400|2666)\b", eval_text) and str(self.target_ram_freq) not in eval_text:
                     return False, f"Частота памяти ниже требуемой ({self.target_ram_freq} МГц)"
+
+        # The listing must actually be the requested model (not RTX 2070 for "rtx 3070").
+        if not title_matches_query(title, self.query, allow_mobile=self.allow_mobile):
+            return False, "Другая модель (не совпадает с запросом)"
 
         # Check user exclude words (with word boundaries on masked text)
         for ew in self.exclude_words:

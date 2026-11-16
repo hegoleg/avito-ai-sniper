@@ -491,16 +491,26 @@ class AvitoScraper:
                 seller_name = (await seller_name_el.inner_text()).strip()
 
             seller_rating_el = await tab.query_selector(
-                '[data-marker="seller-info/rating"], [data-marker="seller-rating/score"], [data-marker*="seller-rating"], [class*="seller-rating"]'
+                '[data-marker="sellerInfo"] [class*="seller-info-rating"], '
+                '[class*="seller-info-rating"], '
+                '[data-marker="seller-info/rating"], [data-marker="seller-rating/score"], '
+                '[data-marker*="seller-rating"], [class*="seller-rating"]'
             )
+            rating_raw = ""
             if seller_rating_el:
                 rating_raw = (await seller_rating_el.inner_text()).strip()
+            else:
+                # Fallback: a seller block like "Пользователь 5,0 3 отзыва"
+                seller_block_el = await tab.query_selector('[data-marker="sellerInfo"]')
+                if seller_block_el:
+                    rating_raw = (await seller_block_el.inner_text()).strip()
+            if rating_raw:
                 m_score = re.search(r"(\d+[,.]\d+)", rating_raw)
                 if m_score:
                     seller_rating = m_score.group(1).replace(",", ".")
-                m_rev = re.search(r"(\d+[\s\d]*\s*отзыв\w*)", rating_raw, re.IGNORECASE)
+                m_rev = re.search(r"\d+\s*отзыв\w*", rating_raw, re.IGNORECASE)
                 if m_rev:
-                    seller_reviews = m_rev.group(1).strip()
+                    seller_reviews = re.sub(r"\s+", " ", m_rev.group(0)).strip()
 
             badge_el = await tab.query_selector(
                 '[data-marker*="seller-badge"], [class*="seller-badge"], span:has-text("подтверждены"), span:has-text("проверены")'

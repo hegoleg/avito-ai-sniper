@@ -40,7 +40,7 @@ from database import (
 from scraper import AvitoScraper
 from anti_bait import check_listing_bait, check_description_bait
 from negation_filter import mask_negations, is_reserved_text
-from universal_sniper import SearchTarget, DEFAULT_EXCLUDES, GPU_MOBILE_PATTERNS, GPU_ACCESSORY_PATTERNS
+from universal_sniper import SearchTarget, DEFAULT_EXCLUDES, GPU_MOBILE_PATTERNS, GPU_ACCESSORY_PATTERNS, title_matches_query
 from hardware_catalog import (
     HARDWARE_CATALOG,
     search_catalog,
@@ -129,8 +129,28 @@ class ApplyCatalogItemRequest(BaseModel):
     catalog_id: str
 
 
+class UniversalScanRequest(BaseModel):
+    query: str
+    min_price: Optional[int] = None
+    max_price: Optional[int] = None
+    required_words: Optional[str] = ""
+    exclude_words: Optional[str] = ""
+    min_seller_rating: Optional[float] = None
+    exclude_mobile: bool = True
+
+
 # Scraper Background Task
-async def run_slot_scan(slot_id: str, query: str, min_price: Optional[int], max_price: Optional[int], required: str, exclude: str):
+async def run_scan_job(
+    query: str,
+    min_price: Optional[int],
+    max_price: Optional[int],
+    required: str,
+    exclude: str,
+    slot_id: Optional[str] = None,
+    min_seller_rating: Optional[float] = None,
+    exclude_mobile: bool = True,
+):
+    """Runs one search cycle for any query. slot_id is optional (universal search)."""
     global scan_state
     async with scanner_lock:
         scan_state["is_running"] = True
@@ -150,8 +170,33 @@ async def run_slot_scan(slot_id: str, query: str, min_price: Optional[int], max_
                 max_price=max_price,
                 location="all",
                 required_words=[w.strip() for w in required.split(",") if w.strip()],
-                exclude_words=[w.strip() for w in exclude.split(",") if w.strip()]
+                exclude_words=[w.strip() for w in exclude.split(",") if w.strip()],
+                exclude_mobile=exclude_mobile,
             )
+
+            # Resolve retail estimate for savings: from build slot if bound, otherwise from catalog.
+            retail_est = 0
+            if slot_id:
+                try:
+                    with get_connection() as conn:
+                        s_row = conn.execute("SELECT retail_est FROM pc_build WHERE slot_id = ?", (slot_id,)).fetchone()
+                        if s_row and s_row["retail_est"]:
+                            retail_est = s_row["retail_est"]
+                except Exception:
+                    pass
+            else:
+                try:
+                    catalog_item = next(
+                        (
+                            it for it in search_catalog(query, limit=5)
+                            if (it.get("query") or "").strip().lower() == query.strip().lower()
+                        ),
+                        None,
+                    )
+                    if catalog_item:
+                        retail_est = catalog_item.get("retail_est") or 0
+                except Exception:
+                    pass
 
             # Phase 1: Cheapest
             scan_state["message"] = f"Опрос Авито: самые дешёвые предложения (s=1)..."
@@ -224,16 +269,18 @@ async def run_slot_scan(slot_id: str, query: str, min_price: Optional[int], max_
                         mark_deal_reserved_or_inactive(item_id)
                     continue
 
-                # Calculate savings against slot retail estimate
-                retail_est = 0
-                try:
-                    with get_connection() as conn:
-                        s_row = conn.execute("SELECT retail_est FROM pc_build WHERE slot_id = ?", (slot_id,)).fetchone()
-                        if s_row and s_row["retail_est"]:
-                            retail_est = s_row["retail_est"]
-                except Exception:
-                    pass
+                # Configurable seller rating threshold: unknown rating does not pass.
+                seller_rating_raw = details.get("seller_rating", "")
+                if min_seller_rating is not None:
+                    rating_value = parse_seller_rating(seller_rating_raw)
+                    if rating_value is None or rating_value < min_seller_rating:
+                        logger.info(
+                            "Skipping %s: seller rating %s below %.2f",
+                            title, seller_rating_raw or "n/a", min_seller_rating,
+                        )
+                        continue
 
+                # Calculate savings against resolved retail estimate
                 savings_rub = max(0, retail_est - price) if retail_est and retail_est > price else 0
                 savings_pct = round((savings_rub / retail_est) * 100, 1) if retail_est and retail_est > 0 else 0
 
@@ -269,6 +316,11 @@ async def run_slot_scan(slot_id: str, query: str, min_price: Optional[int], max_
             scan_state["message"] = f"Ошибка: {e}"
         finally:
             scan_state["is_running"] = False
+
+
+async def run_slot_scan(slot_id: str, query: str, min_price: Optional[int], max_price: Optional[int], required: str, exclude: str):
+    """Backward-compatible slot-bound scan entry point."""
+    await run_scan_job(query, min_price, max_price, required, exclude, slot_id=slot_id)
 
 
 active_verifying_queries = set()
@@ -648,19 +700,25 @@ async def list_templates():
     ]
 
 
-def get_smart_top_deals(query: str, min_price: Optional[int] = None, max_price: Optional[int] = None, limit: int = 10) -> List[Dict[str, Any]]:
+def parse_seller_rating(raw: Any) -> Optional[float]:
+    """Converts a stored seller rating (e.g. '4,9') into a float; None if unavailable."""
+    if raw is None:
+        return None
+    try:
+        value = float(str(raw).replace(",", ".").strip())
+    except (TypeError, ValueError):
+        return None
+    return value if 0 <= value <= 5 else None
+
+
+def get_smart_top_deals(query: str, min_price: Optional[int] = None, max_price: Optional[int] = None, limit: int = 10, min_seller_rating: Optional[float] = None, exclude_mobile: bool = True) -> List[Dict[str, Any]]:
     clean_q = query.strip().lower()
     clean_q_norm = re.sub(r'(\d+)\s*[хx]\b', r'\1x', clean_q)
     
     is_gpu = bool(re.search(r'\b(rtx|gtx|rx|видеокарт|geforce|radeon|gpu)\b', clean_q_norm))
     is_ram = bool(re.search(r'\b(ddr\d?|озу|память|ram)\b', clean_q_norm))
-
-    # Extract primary model tokens (e.g. "5600x", "3070", "b550m", "3200")
-    stop_words = {'amd', 'intel', 'nvidia', 'процессор', 'видеокарта', 'для', 'плата', 'материнская', 'память', 'оперативная', 'кулер', 'блок', 'питания', 'корпус', 'со', 'стеклом', 'atx', 'matx'}
-    raw_tokens = re.findall(r'[a-zA-Z0-9а-яА-ЯёЁ]+', clean_q_norm)
-    key_tokens = [t for t in raw_tokens if t not in stop_words and len(t) > 1]
-    if not key_tokens:
-        key_tokens = raw_tokens
+    allows_mobile = bool(re.search(r'\b(mobile|мобайл|\bm\b|ноутбук)\b', clean_q_norm))
+    compact_mobile_filter = exclude_mobile and not allows_mobile
 
     results = []
     seen_ids = set()
@@ -681,7 +739,6 @@ def get_smart_top_deals(query: str, min_price: Optional[int] = None, max_price: 
                 continue
                 
             t_norm = re.sub(r'(\d+)\s*[хx]\b', r'\1x', v["title"].lower())
-            v_query = (v["query"] or "").lower()
 
             # RAM validation for verified deals
             if is_ram:
@@ -711,12 +768,15 @@ def get_smart_top_deals(query: str, min_price: Optional[int] = None, max_price: 
 
             # GPU validation for verified deals
             if is_gpu:
-                if any(re.search(pat, t_norm) for pat in GPU_MOBILE_PATTERNS + GPU_ACCESSORY_PATTERNS):
+                if any(re.search(pat, t_norm) for pat in GPU_ACCESSORY_PATTERNS):
+                    mark_deal_reserved_or_inactive(iid)
+                    continue
+                if compact_mobile_filter and any(re.search(pat, t_norm) for pat in GPU_MOBILE_PATTERNS):
                     mark_deal_reserved_or_inactive(iid)
                     continue
 
-            # Strict match: all key tokens must be in verified deal title or original query
-            if all(k in t_norm or k in v_query for k in key_tokens):
+            # Strict model match: title must contain the requested model itself
+            if title_matches_query(v["title"], query, allow_mobile=allows_mobile):
                 seen_ids.add(iid)
                 specs_obj = {}
                 if v["specs"]:
@@ -724,6 +784,10 @@ def get_smart_top_deals(query: str, min_price: Optional[int] = None, max_price: 
                         specs_obj = json.loads(v["specs"])
                     except Exception:
                         pass
+                if min_seller_rating is not None:
+                    rating_value = parse_seller_rating(specs_obj.get("seller_rating"))
+                    if rating_value is None or rating_value < min_seller_rating:
+                        continue
                 results.append({
                     "item_id": iid,
                     "title": v["title"],
@@ -753,6 +817,9 @@ def get_smart_top_deals(query: str, min_price: Optional[int] = None, max_price: 
             iid = str(r["item_id"])
             if iid in seen_ids:
                 continue
+            # Seller rating is only known for verified deals; unknown cannot satisfy the threshold.
+            if min_seller_rating is not None:
+                continue
             p = r["price"]
             if min_price and p < min_price:
                 continue
@@ -762,8 +829,8 @@ def get_smart_top_deals(query: str, min_price: Optional[int] = None, max_price: 
             t_clean = r["title"].lower()
             t_norm = re.sub(r'(\d+)\s*[хx]\b', r'\1x', t_clean)
 
-            # Check all key tokens exist
-            if not all(k in t_norm for k in key_tokens):
+            # Check requested model exists in the title
+            if not title_matches_query(r["title"], query, allow_mobile=allows_mobile):
                 continue
 
             full_text = f"{t_norm} {(r['raw_description'] or '').lower()}"
@@ -778,7 +845,9 @@ def get_smart_top_deals(query: str, min_price: Optional[int] = None, max_price: 
 
             # GPU mobile check
             if is_gpu:
-                if any(re.search(pat, masked_eval) for pat in GPU_MOBILE_PATTERNS + GPU_ACCESSORY_PATTERNS):
+                if any(re.search(pat, masked_eval) for pat in GPU_ACCESSORY_PATTERNS):
+                    continue
+                if compact_mobile_filter and any(re.search(pat, masked_eval) for pat in GPU_MOBILE_PATTERNS):
                     continue
 
             # RAM checks (server / sodimm / laptop)
@@ -817,7 +886,13 @@ def get_smart_top_deals(query: str, min_price: Optional[int] = None, max_price: 
 
 
 @app.get("/api/deals/{query}")
-async def get_deals_for_query(query: str, min_price: Optional[int] = None, max_price: Optional[int] = None):
+async def get_deals_for_query(
+    query: str,
+    min_price: Optional[int] = None,
+    max_price: Optional[int] = None,
+    min_seller_rating: Optional[float] = None,
+    exclude_mobile: bool = True,
+):
     # Auto-resolve min_price from pc_build slots if not explicitly provided
     if min_price is None:
         try:
@@ -839,7 +914,9 @@ async def get_deals_for_query(query: str, min_price: Optional[int] = None, max_p
         query=query,
         min_price=min_price,
         max_price=max_price,
-        limit=12
+        limit=12,
+        min_seller_rating=min_seller_rating,
+        exclude_mobile=exclude_mobile,
     )
 
     # Automated background maintenance: auto-verify if verified count < 4 OR if deals require re-check
@@ -900,6 +977,37 @@ async def trigger_scan(slot_id: str, background_tasks: BackgroundTasks):
         exclude=slot.get("exclude_words", "")
     )
     return {"status": "started", "slot_id": slot_id, "query": slot["target_query"]}
+
+
+@app.post("/api/search")
+async def trigger_universal_search(req: UniversalScanRequest, background_tasks: BackgroundTasks):
+    """Starts a search for any Avito query without a PC build slot."""
+    query = (req.query or "").strip()
+    if not query:
+        raise HTTPException(status_code=400, detail="Пустой поисковый запрос")
+    if scan_state["is_running"]:
+        return JSONResponse(status_code=409, content={"status": "busy", "message": "Сканирование уже выполняется"})
+
+    scan_state["is_running"] = True
+    scan_state["slot_id"] = None
+    scan_state["query"] = query
+    scan_state["message"] = f"Подготовка к поиску '{query}'..."
+    scan_state["progress"] = 5
+    scan_state["new_deals_count"] = 0
+    scan_state["last_error"] = None
+
+    background_tasks.add_task(
+        run_scan_job,
+        query,
+        req.min_price,
+        req.max_price,
+        req.required_words or "",
+        req.exclude_words or "",
+        None,
+        req.min_seller_rating,
+        req.exclude_mobile,
+    )
+    return {"status": "started", "query": query}
 
 
 @app.get("/api/scan/status")

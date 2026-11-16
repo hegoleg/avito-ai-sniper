@@ -62,6 +62,33 @@ class TestWebAppEndpoints(unittest.TestCase):
         self.assertEqual(res.status_code, 200)
         self.assertIn("deals", res.json())
 
+    def test_get_deals_with_min_seller_rating(self):
+        """GET /api/deals/{query}?min_seller_rating=4.5 returns only rated verified deals."""
+        res = self.client.get("/api/deals/rtx 3070?min_seller_rating=4.5")
+        self.assertEqual(res.status_code, 200)
+        for deal in res.json()["deals"]:
+            self.assertTrue(deal["is_verified"])
+            self.assertGreaterEqual(float(deal["seller_rating"]), 4.5)
+
+    def test_get_deals_with_mobile_filter_off(self):
+        """GET /api/deals/{query}?exclude_mobile=0 includes mobile chips instead of hiding them."""
+        res = self.client.get("/api/deals/rtx 3070?exclude_mobile=0")
+        self.assertEqual(res.status_code, 200)
+        self.assertIn("deals", res.json())
+
+
+class TestSellerRatingParsing(unittest.TestCase):
+    def test_parse_seller_rating(self):
+        from web_app import parse_seller_rating
+
+        self.assertEqual(parse_seller_rating("4.9"), 4.9)
+        self.assertEqual(parse_seller_rating("4,9"), 4.9)
+        self.assertEqual(parse_seller_rating("5"), 5.0)
+        self.assertIsNone(parse_seller_rating(""))
+        self.assertIsNone(parse_seller_rating(None))
+        self.assertIsNone(parse_seller_rating("нет рейтинга"))
+        self.assertIsNone(parse_seller_rating("7.2"))
+
 
 if __name__ == "__main__":
     unittest.main()
